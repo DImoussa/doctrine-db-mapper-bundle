@@ -1,0 +1,39 @@
+services:
+    App\Bundle\DbMapperBundle\Service\SchemaExtractor:
+        arguments:
+            $connection: '@doctrine.dbal.default_connection'
+
+    App\Bundle\DbMapperBundle\Service\RelationshipAnalyzer: ~
+
+    App\Bundle\DbMapperBundle\Service\EntityGenerator:
+        arguments:
+            $relationshipAnalyzer: '@App\Bundle\DbMapperBundle\Service\RelationshipAnalyzer'
+
+    App\Bundle\DbMapperBundle\Command\GenerateEntitiesCommand:
+        arguments:
+            $schemaExtractor: '@App\Bundle\DbMapperBundle\Service\SchemaExtractor'
+            $entityGenerator: '@App\Bundle\DbMapperBundle\Service\EntityGenerator'
+            $relationshipAnalyzer: '@App\Bundle\DbMapperBundle\Service\RelationshipAnalyzer'
+        tags:
+            - { name: 'console.command' }
+
+    App\Bundle\DbMapperBundle\Service\SchemaExplorer:
+        arguments:
+            - '@doctrine.dbal.default_connection'
+
+    App\Bundle\DbMapperBundle\Service\DoctrineTypeRegistry: ~
+
+    App\Bundle\DbMapperBundle\Service\SchemaChangePlanner: ~
+
+    App\Bundle\DbMapperBundle\Service\SchemaModifier:
+        arguments:
+            - '@doctrine.dbal.default_connection'
+            - '@App\Bundle\DbMapperBundle\Service\DoctrineTypeRegistry'
+
+    App\Bundle\DbMapperBundle\Command\ModifyEntitiesCommand:
+        tags: ['console.command']
+        arguments:
+            - '@App\Bundle\DbMapperBundle\Service\SchemaExplorer'
+            - '@App\Bundle\DbMapperBundle\Service\DoctrineTypeRegistry'
+            - '@App\Bundle\DbMapperBundle\Service\SchemaChangePlanner'
+            - '@App\Bundle\DbMapperBundle\Service\SchemaModifier'
