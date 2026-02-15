@@ -10,6 +10,7 @@
             "email": "moussadou128@gmail.com"
         }
     ],
+    
     "require": {
         "php": ">=8.1",
         "symfony/console": "^6.0|^7.0",

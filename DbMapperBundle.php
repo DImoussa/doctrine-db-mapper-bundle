@@ -7,6 +7,7 @@ namespace App\Bundle\DbMapperBundle;
 use Symfony\Component\HttpKernel\Bundle\Bundle;
 
 /**
+ * 
  * DbMapperBundle main class.
  *
  * @author Diallo Moussa <moussadou128@gmail.com>
