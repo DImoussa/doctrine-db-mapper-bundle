@@ -23,3 +23,5 @@ Thumbs.db
 # Build files
 /build/
 
+.env
+.env.local
