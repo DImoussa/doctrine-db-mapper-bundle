@@ -40,6 +40,19 @@ php bin/console dbmapper:generate-entities src/Entity
 php bin/console dbmapper:generate-entities src/Entity --table=users
 ```
 
+### 📋 Output example
+
+```
+📊 Analyzing the database schema...
+🔗 Analyzing relationships between tables...
+⚙️  Generating entities and repositories...
+✅ User.php generated
+✅ Post.php generated
+✅ Comment.php generated
+🎉 3 entities successfully created!
+```
+
+
 #### Manage the database (modify, view the schema...)
 
 ```bash
@@ -149,17 +162,6 @@ The change plan has been cleared.
 - ✅ `add`/`remove` methods for collections
 - ✅ Repositories
 
-### 📋 Output example
-
-```
-📊 Analyzing the database schema...
-🔗 Analyzing relationships between tables...
-⚙️  Generating entities and repositories...
-✅ User.php generated
-✅ Post.php generated
-✅ Comment.php generated
-🎉 3 entities successfully created!
-```
 
 ### 📝 Requirements
 
@@ -211,6 +213,19 @@ php bin/console dbmapper:generate-entities src/Entity
 ```bash
 php bin/console dbmapper:generate-entities src/Entity --table=users
 ```
+
+### 📋 Exemple de sortie
+
+```
+📊 Analyse du schéma de la base de données...
+🔗 Analyse des relations entre tables...
+⚙️  Génération des entités et repositories...
+✅ User.php généré
+✅ Post.php généré
+✅ Comment.php généré
+🎉 3 entités créées avec succès !
+```
+
 
 #### Gérer la base de donnée (modification, visualisation de la base...)
 
@@ -321,17 +336,6 @@ Le plan de changements a été vidé.
 - ✅ Méthodes `add`/`remove` pour les collections
 - ✅ Repositories
 
-### 📋 Exemple de sortie
-
-```
-📊 Analyse du schéma de la base de données...
-🔗 Analyse des relations entre tables...
-⚙️  Génération des entités et repositories...
-✅ User.php généré
-✅ Post.php généré
-✅ Comment.php généré
-🎉 3 entités créées avec succès !
-```
 
 ### 📝 Prérequis
 
