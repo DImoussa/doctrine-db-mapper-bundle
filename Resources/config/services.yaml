@@ -17,6 +17,7 @@ services:
         tags:
             - { name: 'console.command' }
 
+   
     App\Bundle\DbMapperBundle\Service\SchemaExplorer:
         arguments:
             - '@doctrine.dbal.default_connection'

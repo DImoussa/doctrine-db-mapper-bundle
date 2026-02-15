@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Bundle\DbMapperBundle\Exception;
 
 /**
+ * 
  * Exception thrown when database schema extraction fails.
  *
  * This exception is thrown when the bundle cannot retrieve information

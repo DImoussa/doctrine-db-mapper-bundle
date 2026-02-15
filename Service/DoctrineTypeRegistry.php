@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Bundle\DbMapperBundle\Service;
 
 /**
- * Fournit la liste des types Doctrine supportés et la validation associée.
+ *Fournit la liste des types Doctrine supportés et la validation associée.
  */
 class DoctrineTypeRegistry
 {

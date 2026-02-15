@@ -33,6 +33,11 @@ php bin/console dbmapper:generate-entities src/Entity
 php bin/console dbmapper:generate-entities src/Entity --table=users
 ```
 
+### Gérer la base de donnée (modification, visualisation de la base... )
+```bash
+php bin/console dbmapper:modify-entities
+```
+
 ## ✨ Ce que le bundle génère
 
 - ✅ Entités Doctrine avec types PHP corrects
