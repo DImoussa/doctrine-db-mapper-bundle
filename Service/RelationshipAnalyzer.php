@@ -13,6 +13,9 @@ class RelationshipAnalyzer
 {
     private array $tableRelations = [];
     private array $manyToManyTables = [];
+    private array $manyToManyRelationsPerTable = [];
+    private array $relationPropertyRegistry = [];
+    private array $manyToManyPairCounts = [];
 
     /**
      * Analyse toutes les relations de la base de données
@@ -23,6 +26,9 @@ class RelationshipAnalyzer
     {
         $this->tableRelations = [];
         $this->manyToManyTables = [];
+        $this->manyToManyRelationsPerTable = [];
+        $this->relationPropertyRegistry = [];
+        $this->manyToManyPairCounts = [];
 
         foreach ($allTablesData as $tableName => $data) {
             $foreignKeys = $data['foreignKeys'] ?? [];
@@ -65,6 +71,8 @@ class RelationshipAnalyzer
                 }
             }
         }
+
+        $this->buildManyToManyRelations();
     }
 
     /**
@@ -136,50 +144,7 @@ class RelationshipAnalyzer
      */
     public function getManyToManyRelations(string $tableName): array
     {
-        $relations = [];
-
-        foreach ($this->manyToManyTables as $joinTable => $foreignKeys) {
-            $referencedTables = array_column($foreignKeys, 'REFERENCED_TABLE_NAME');
-
-            if (in_array($tableName, $referencedTables, true)) {
-                // Cette table participe à une relation ManyToMany via $joinTable
-                $otherTable = array_values(array_diff($referencedTables, [$tableName]))[0] ?? null;
-
-                if ($otherTable) {
-                    // Trouver les colonnes de jointure et leurs références
-                    $ownColumn = null;
-                    $inverseColumn = null;
-                    $ownReferencedColumn = null;
-                    $inverseReferencedColumn = null;
-
-                    foreach ($foreignKeys as $fk) {
-                        if ($fk['REFERENCED_TABLE_NAME'] === $tableName) {
-                            $ownColumn = $fk['COLUMN_NAME'];
-                            $ownReferencedColumn = $fk['REFERENCED_COLUMN_NAME'];
-                        } else {
-                            $inverseColumn = $fk['COLUMN_NAME'];
-                            $inverseReferencedColumn = $fk['REFERENCED_COLUMN_NAME'];
-                        }
-                    }
-
-                    // Déterminer le côté propriétaire (owning side) par ordre alphabétique
-                    // Le côté propriétaire est celui dont le nom de table vient en premier alphabétiquement
-                    $isOwner = strcasecmp($tableName, $otherTable) < 0;
-
-                    $relations[] = [
-                        'targetEntity' => $otherTable,
-                        'joinTable' => $joinTable,
-                        'joinColumn' => $ownColumn,
-                        'inverseJoinColumn' => $inverseColumn,
-                        'joinReferencedColumn' => $ownReferencedColumn,
-                        'inverseJoinReferencedColumn' => $inverseReferencedColumn,
-                        'isOwner' => $isOwner,
-                    ];
-                }
-            }
-        }
-
-        return $relations;
+        return $this->manyToManyRelationsPerTable[$tableName] ?? [];
     }
 
     /**
@@ -198,5 +163,145 @@ class RelationshipAnalyzer
     {
         return array_keys($this->manyToManyTables);
     }
-}
 
+    private function buildManyToManyRelations(): void
+    {
+        $this->manyToManyPairCounts = [];
+
+        foreach ($this->manyToManyTables as $foreignKeys) {
+            if (count($foreignKeys) !== 2) {
+                continue;
+            }
+
+            $pairKey = $this->buildPairKey(
+                $foreignKeys[0]['REFERENCED_TABLE_NAME'] ?? '',
+                $foreignKeys[1]['REFERENCED_TABLE_NAME'] ?? ''
+            );
+
+            $this->manyToManyPairCounts[$pairKey] = ($this->manyToManyPairCounts[$pairKey] ?? 0) + 1;
+        }
+
+        foreach ($this->manyToManyTables as $joinTable => $foreignKeys) {
+            if (count($foreignKeys) !== 2) {
+                continue;
+            }
+
+            $fkA = $foreignKeys[0];
+            $fkB = $foreignKeys[1];
+            $tableA = $fkA['REFERENCED_TABLE_NAME'];
+            $tableB = $fkB['REFERENCED_TABLE_NAME'];
+
+            if (!$tableA || !$tableB) {
+                continue;
+            }
+
+            $pairKey = $this->buildPairKey($tableA, $tableB);
+            $forceSuffix = ($this->manyToManyPairCounts[$pairKey] ?? 0) > 1;
+
+            // Déterminer le côté propriétaire (ordre alphabétique stable)
+            $ownerTable = strcasecmp($tableA, $tableB) <= 0 ? $tableA : $tableB;
+            $inverseTable = $ownerTable === $tableA ? $tableB : $tableA;
+            $ownerFk = $ownerTable === $tableA ? $fkA : $fkB;
+            $inverseFk = $ownerFk === $fkA ? $fkB : $fkA;
+
+            $ownerProperty = $this->generateRelationPropertyName($ownerTable, $inverseTable, $joinTable, $forceSuffix);
+            $inverseProperty = $this->generateRelationPropertyName($inverseTable, $ownerTable, $joinTable, $forceSuffix);
+
+            $this->manyToManyRelationsPerTable[$ownerTable][] = [
+                'targetEntity' => $inverseTable,
+                'joinTable' => $joinTable,
+                'joinColumn' => $ownerFk['COLUMN_NAME'],
+                'inverseJoinColumn' => $inverseFk['COLUMN_NAME'],
+                'joinReferencedColumn' => $ownerFk['REFERENCED_COLUMN_NAME'],
+                'inverseJoinReferencedColumn' => $inverseFk['REFERENCED_COLUMN_NAME'],
+                'isOwner' => true,
+                'propertyName' => $ownerProperty,
+                'mappedBy' => null,
+                'inversedBy' => $inverseProperty,
+            ];
+
+            $this->manyToManyRelationsPerTable[$inverseTable][] = [
+                'targetEntity' => $ownerTable,
+                'joinTable' => $joinTable,
+                'joinColumn' => $inverseFk['COLUMN_NAME'],
+                'inverseJoinColumn' => $ownerFk['COLUMN_NAME'],
+                'joinReferencedColumn' => $inverseFk['REFERENCED_COLUMN_NAME'],
+                'inverseJoinReferencedColumn' => $ownerFk['REFERENCED_COLUMN_NAME'],
+                'isOwner' => false,
+                'propertyName' => $inverseProperty,
+                'mappedBy' => $ownerProperty,
+                'inversedBy' => null,
+            ];
+        }
+    }
+
+    private function generateRelationPropertyName(string $sourceTable, string $targetTable, string $joinTable, bool $forceSuffix = false): string
+    {
+        $baseName = $this->pluralize(lcfirst($this->snakeToCamel($targetTable)));
+        $registry = $this->relationPropertyRegistry[$sourceTable] ?? [];
+
+        if (!$forceSuffix && !in_array($baseName, $registry, true)) {
+            $this->relationPropertyRegistry[$sourceTable][] = $baseName;
+            return $baseName;
+        }
+
+        $suffix = $this->snakeToCamel($joinTable, true);
+        $candidate = $baseName . $suffix;
+        $counter = 2;
+
+        while (in_array($candidate, $registry, true)) {
+            $candidate = $baseName . $suffix . $counter;
+            $counter++;
+        }
+
+        $this->relationPropertyRegistry[$sourceTable][] = $candidate;
+
+        return $candidate;
+    }
+
+    private function snakeToCamel(string $value, bool $capitalizeFirst = false): string
+    {
+        $result = str_replace('_', '', ucwords($value, '_'));
+
+        return $capitalizeFirst ? $result : lcfirst($result);
+    }
+
+    private function pluralize(string $word): string
+    {
+        $irregulars = [
+            'person' => 'people',
+            'Person' => 'People',
+            'child' => 'children',
+            'Child' => 'Children',
+        ];
+
+        if (isset($irregulars[$word])) {
+            return $irregulars[$word];
+        }
+
+        if (str_ends_with($word, 's')) {
+            return $word;
+        }
+
+        $penultimate = strlen($word) > 1 ? substr($word, -2, 1) : '';
+
+        if (str_ends_with($word, 'y') && !in_array($penultimate, ['a', 'e', 'i', 'o', 'u'], true)) {
+            return substr($word, 0, -1) . 'ies';
+        }
+
+        if (str_ends_with($word, 'ch') || str_ends_with($word, 'sh') ||
+            str_ends_with($word, 'ss') || str_ends_with($word, 'x') || str_ends_with($word, 'z')) {
+            return $word . 'es';
+        }
+
+        return $word . 's';
+    }
+
+    private function buildPairKey(string $tableA, string $tableB): string
+    {
+        $pair = [strtolower($tableA), strtolower($tableB)];
+        sort($pair);
+
+        return $pair[0] . '::' . $pair[1];
+    }
+}

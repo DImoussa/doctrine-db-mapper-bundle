@@ -61,7 +61,10 @@ class SchemaExtractor
      *                                           - DATA_TYPE: string
      *                                           - COLUMN_KEY: string
      *                                           - IS_NULLABLE: string ('YES' or 'NO')
-     *                                           - COLUMN_TYPE: string
+     *                                           - COLUMN_TYPE: string (raw MySQL definition)
+     *                                           - CHARACTER_MAXIMUM_LENGTH: int|null
+     *                                           - NUMERIC_PRECISION: int|null
+     *                                           - NUMERIC_SCALE: int|null
      *
      * @throws SchemaExtractionException If table doesn't exist or query fails
      */
@@ -72,7 +75,8 @@ class SchemaExtractor
         }
 
         try {
-            $sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY, IS_NULLABLE, COLUMN_TYPE
+            $sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY, IS_NULLABLE, COLUMN_TYPE,
+                           CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE
                     FROM information_schema.columns
                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?";
             $result = $this->connection->fetchAllAssociative($sql, [$table]);

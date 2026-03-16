@@ -191,9 +191,7 @@ PHP;
         }
 
         // === STEP 3: Relations OneToMany (côté inverse) ===
-        $addedInverseRelations = []; // Pour éviter les doublons
-
-        // Grouper les relations inverses par table source pour détecter les FK multiples
+        $addedInverseRelations = [];
         $inverseGroupedBySource = [];
         foreach ($inverseRelations as $relation) {
             $sourceTable = $relation['sourceTable'];
@@ -207,83 +205,63 @@ PHP;
             $targetEntity = $this->snakeToCamel($relation['sourceTable'], true);
             $sourceTable = $relation['sourceTable'];
             $columnName = $relation['columnName'];
-
-            // Vérifier s'il y a plusieurs FK de la table source vers cette table
             $hasMultipleFKFromSource = count($inverseGroupedBySource[$sourceTable]) > 1;
+            $mappedByProperty = $hasMultipleFKFromSource
+                ? $this->extractSemanticName($columnName, $tableName)
+                : $this->cleanRelationPropertyName($columnName, $tableName);
 
-            // Déterminer le mappedBy (doit correspondre au nom de propriété généré en STEP 2 de l'entité source)
-            if ($hasMultipleFKFromSource) {
-                // Utiliser extractSemanticName pour retrouver le nom exact
-                $mappedByProperty = $this->extractSemanticName($columnName, $tableName);
-            } else {
-                $mappedByProperty = $this->cleanRelationPropertyName($columnName, $tableName);
-            }
-
-            // Créer une clé unique pour cette relation
             $relationKey = $targetEntity . '::' . $mappedByProperty;
-
-            // Éviter les doublons (même entité + même mappedBy)
             if (isset($addedInverseRelations[$relationKey])) {
                 continue;
             }
             $addedInverseRelations[$relationKey] = true;
 
-            // Nom de propriété basé sur inversedBy qui serait généré côté source
-            if ($hasMultipleFKFromSource) {
-                // Générer le même nom qu'en STEP 2 de l'entité source
-                $propertyName = $this->generateInversedByName($mappedByProperty, lcfirst($targetEntity));
-            } else {
-                // Nom standard au pluriel
-                $propertyName = $this->pluralize(lcfirst($targetEntity));
-            }
+            $propertyName = $hasMultipleFKFromSource
+                ? $this->generateInversedByName($mappedByProperty, lcfirst($targetEntity))
+                : $this->pluralize(lcfirst($targetEntity));
 
-            // Gérer les collisions de noms de propriété
             $counter = 2;
             while (isset($definedProperties[$propertyName])) {
-                if ($hasMultipleFKFromSource) {
-                    $propertyName = $this->generateInversedByName($mappedByProperty, lcfirst($targetEntity)) . $counter;
-                } else {
-                    $propertyName = $this->pluralize(lcfirst($targetEntity)) . $counter;
-                }
+                $propertyName = $hasMultipleFKFromSource
+                    ? $this->generateInversedByName($mappedByProperty, lcfirst($targetEntity)) . $counter
+                    : $this->pluralize(lcfirst($targetEntity)) . $counter;
                 $counter++;
             }
 
             $code .= "    #[ORM\\OneToMany(mappedBy: '{$mappedByProperty}', targetEntity: {$targetEntity}::class)]\n";
             $code .= "    private Collection \${$propertyName};\n\n";
             $definedProperties[$propertyName] = true;
-
             $constructorNeeded = true;
             $constructorCode .= "        \$this->{$propertyName} = new ArrayCollection();\n";
         }
 
         // === STEP 4: Relations ManyToMany ===
+        $manyToManyPropertyMap = [];
         foreach ($manyToManyRelations as $relation) {
             $targetEntity = $this->snakeToCamel($relation['targetEntity'], true);
-            $propertyName = $this->pluralize(lcfirst($targetEntity));
-
-            $counter = 2;
-            while (isset($definedProperties[$propertyName])) {
-                $propertyName = $this->pluralize(lcfirst($targetEntity)) . $counter;
-                $counter++;
-            }
+            $propertyName = $relation['propertyName'] ?? $this->pluralize(lcfirst($targetEntity));
 
             if ($relation['isOwner']) {
-                // Côté propriétaire
-                $code .= "    #[ORM\\ManyToMany(targetEntity: {$targetEntity}::class, inversedBy: '" . $this->pluralize(lcfirst($className)) . "')]\n";
+                $inverseProperty = $relation['inversedBy'] ?? $this->pluralize(lcfirst($className));
+                $code .= "    #[ORM\\ManyToMany(targetEntity: {$targetEntity}::class, inversedBy: '{$inverseProperty}')]\n";
                 $code .= "    #[ORM\\JoinTable(name: '{$relation['joinTable']}')]\n";
-                // Utiliser les vraies colonnes de référence de la base de données
                 $code .= "    #[ORM\\JoinColumn(name: '{$relation['joinColumn']}', referencedColumnName: '{$relation['joinReferencedColumn']}')]\n";
                 $code .= "    #[ORM\\InverseJoinColumn(name: '{$relation['inverseJoinColumn']}', referencedColumnName: '{$relation['inverseJoinReferencedColumn']}')]\n";
             } else {
-                // Côté inverse
-                $code .= "    #[ORM\\ManyToMany(targetEntity: {$targetEntity}::class, mappedBy: '" . $this->pluralize(lcfirst($className)) . "')]\n";
+                $mappedBy = $relation['mappedBy'] ?? $this->pluralize(lcfirst($className));
+                $code .= "    #[ORM\\ManyToMany(targetEntity: {$targetEntity}::class, mappedBy: '{$mappedBy}')]\n";
             }
 
             $code .= "    private Collection \${$propertyName};\n\n";
             $definedProperties[$propertyName] = true;
-
             $constructorNeeded = true;
             $constructorCode .= "        \$this->{$propertyName} = new ArrayCollection();\n";
+
+            $manyToManyPropertyMap[] = [
+                'propertyName' => $propertyName,
+                'targetEntity' => $targetEntity,
+                'relation' => $relation,
+            ];
         }
 
         // === STEP 5: Constructeur si nécessaire ===
@@ -378,71 +356,58 @@ PHP;
             $singularCollectionName = $this->singularize($realPropertyName);
             $methodBase = ucfirst($singularCollectionName);
             $collectionMethodName = ucfirst($realPropertyName);
-
             $code .= "    /**\n";
             $code .= "     * @return Collection<int, {$targetEntity}>\n";
             $code .= "     */\n";
             $code .= "    public function get{$collectionMethodName}(): Collection\n    {\n        return \$this->{$realPropertyName};\n    }\n\n";
 
-            $code .= "    public function add{$methodBase}({$targetEntity} \${$singularCollectionName}): static\n    {\n";
-            $code .= "        if (!\$this->{$realPropertyName}->contains(\${$singularCollectionName})) {\n";
-            $code .= "            \$this->{$realPropertyName}->add(\${$singularCollectionName});\n";
-            $code .= "            \${$singularCollectionName}->set" . ucfirst($mappedByProperty) . "(\$this);\n";
+            $singularCollectionVar = '$' . $singularCollectionName;
+
+            $code .= "    public function add{$methodBase}({$targetEntity} {$singularCollectionVar}): static\n    {\n";
+            $code .= "        if (!\$this->{$realPropertyName}->contains({$singularCollectionVar})) {\n";
+            $code .= "            \$this->{$realPropertyName}->add({$singularCollectionVar});\n";
+            $code .= '            ' . $singularCollectionVar . '->set' . ucfirst($mappedByProperty) . "(\$this);\n";
             $code .= "        }\n\n";
             $code .= "        return \$this;\n    }\n\n";
 
-            $code .= "    public function remove{$methodBase}({$targetEntity} \${$singularCollectionName}): static\n    {\n";
-            $code .= "        if (\$this->{$realPropertyName}->removeElement(\${$singularCollectionName})) {\n";
-            $code .= "            if (\${$singularCollectionName}->get" . ucfirst($mappedByProperty) . "() === \$this) {\n";
-                $code .= "                \${$singularCollectionName}->set" . ucfirst($mappedByProperty) . "(null);\n";
+            $code .= "    public function remove{$methodBase}({$targetEntity} {$singularCollectionVar}): static\n    {\n";
+            $code .= "        if (\$this->{$realPropertyName}->removeElement({$singularCollectionVar})) {\n";
+            $code .= "            if ({$singularCollectionVar}->get" . ucfirst($mappedByProperty) . "() === \$this) {\n";
+            $code .= '                ' . $singularCollectionVar . '->set' . ucfirst($mappedByProperty) . "(null);\n";
             $code .= "            }\n";
             $code .= "        }\n\n";
             $code .= "        return \$this;\n    }\n\n";
         }
 
         // === STEP 9: Méthodes pour ManyToMany ===
-        $processedManyToManyMethods = [];
-        foreach ($manyToManyRelations as $relation) {
-            $targetEntity = $this->snakeToCamel($relation['targetEntity'], true);
+        foreach ($manyToManyPropertyMap as $entry) {
+            $relation = $entry['relation'];
+            $targetEntity = $entry['targetEntity'];
+            $realPropertyName = $entry['propertyName'];
 
-            // Retrouver le vrai nom de propriété ManyToMany défini en STEP 4
-            $realPropertyName = null;
-            foreach ($definedProperties as $prop => $val) {
-                if (str_starts_with($prop, lcfirst($targetEntity))) {
-                    if (!isset($processedManyToManyMethods[$prop]) && !isset($processedOneToManyMethods[$prop])) {
-                        $realPropertyName = $prop;
-                        break;
-                    }
-                }
-            }
-
-            if (!$realPropertyName) {
-                continue;
-            }
-            $processedManyToManyMethods[$realPropertyName] = true;
-
-            $singularName = rtrim($realPropertyName, 's');
+            $singularName = $this->singularize($realPropertyName);
             $methodBase   = ucfirst($singularName);
             $collectionMethodName = ucfirst($realPropertyName);
+            $singularVar = '$' . $singularName;
 
             $code .= "    /**\n";
             $code .= "     * @return Collection<int, {$targetEntity}>\n";
             $code .= "     */\n";
             $code .= "    public function get{$collectionMethodName}(): Collection\n    {\n        return \$this->{$realPropertyName};\n    }\n\n";
 
-            $code .= "    public function add{$methodBase}({$targetEntity} \${$singularName}): static\n    {\n";
-            $code .= "        if (!\$this->{$realPropertyName}->contains(\${$singularName})) {\n";
-            $code .= "            \$this->{$realPropertyName}->add(\${$singularName});\n";
+            $code .= "    public function add{$methodBase}({$targetEntity} {$singularVar}): static\n    {\n";
+            $code .= "        if (!\$this->{$realPropertyName}->contains({$singularVar})) {\n";
+            $code .= "            \$this->{$realPropertyName}->add({$singularVar});\n";
             if (!$relation['isOwner']) {
-                $code .= "            \${$singularName}->add" . ucfirst(lcfirst($className)) . "(\$this);\n";
+                $code .= '            ' . $singularVar . '->add' . ucfirst(lcfirst($className)) . "(\$this);\n";
             }
             $code .= "        }\n\n";
             $code .= "        return \$this;\n    }\n\n";
 
-            $code .= "    public function remove{$methodBase}({$targetEntity} \${$singularName}): static\n    {\n";
-            $code .= "        if (\$this->{$realPropertyName}->removeElement(\${$singularName})) {\n";
+            $code .= "    public function remove{$methodBase}({$targetEntity} {$singularVar}): static\n    {\n";
+            $code .= "        if (\$this->{$realPropertyName}->removeElement({$singularVar})) {\n";
             if (!$relation['isOwner']) {
-                $code .= "            \${$singularName}->remove" . ucfirst(lcfirst($className)) . "(\$this);\n";
+                $code .= '            ' . $singularVar . '->remove' . ucfirst(lcfirst($className)) . "(\$this);\n";
             }
             $code .= "        }\n\n";
             $code .= "        return \$this;\n    }\n\n";
@@ -644,10 +609,23 @@ PHP;
 
         // Ajouter le nom de la colonne explicitement
         $columnAttr = "    #[ORM\Column(name: \"{$column['COLUMN_NAME']}\", type: $ormType";
-        if (preg_match('/char|string/', $column['DATA_TYPE'])) {
-            if (preg_match('/\((\d+)\)/', $column['COLUMN_TYPE'], $matches)) {
-                $length = $matches[1];
+        if ($this->columnSupportsLength($column['DATA_TYPE'])) {
+            $length = $this->resolveStringLength($column);
+            if ($length !== null) {
                 $columnAttr .= ", length: $length";
+            }
+        }
+
+        if ($this->isDecimalColumn($column)) {
+            $precision = $this->resolveNumericPrecision($column);
+            $scale = $this->resolveNumericScale($column);
+
+            if ($precision !== null) {
+                $columnAttr .= ", precision: $precision";
+            }
+
+            if ($scale !== null) {
+                $columnAttr .= ", scale: $scale";
             }
         }
 
@@ -834,6 +812,71 @@ PHP;
         return [];
     }
 
+    private function columnSupportsLength(string $dataType): bool
+    {
+        $type = strtolower($dataType);
+
+        return str_contains($type, 'char') || $type === 'string' || $type === 'binary' || $type === 'varbinary';
+    }
+
+    private function resolveStringLength(array $column): ?int
+    {
+        if (isset($column['CHARACTER_MAXIMUM_LENGTH']) && $column['CHARACTER_MAXIMUM_LENGTH'] !== null) {
+            return (int) $column['CHARACTER_MAXIMUM_LENGTH'];
+        }
+
+        if (!empty($column['COLUMN_TYPE']) && preg_match('/\((\d+)\)/', $column['COLUMN_TYPE'], $matches)) {
+            return (int) $matches[1];
+        }
+
+        return null;
+    }
+
+    private function isDecimalColumn(array $column): bool
+    {
+        $type = strtolower($column['DATA_TYPE']);
+
+        return in_array($type, ['decimal', 'numeric'], true);
+    }
+
+    private function resolveNumericPrecision(array $column): ?int
+    {
+        if (isset($column['NUMERIC_PRECISION']) && $column['NUMERIC_PRECISION'] !== null) {
+            return (int) $column['NUMERIC_PRECISION'];
+        }
+
+        [$precision] = $this->parseNumericMetaFromColumnType($column);
+
+        return $precision;
+    }
+
+    private function resolveNumericScale(array $column): ?int
+    {
+        if (isset($column['NUMERIC_SCALE']) && $column['NUMERIC_SCALE'] !== null) {
+            return (int) $column['NUMERIC_SCALE'];
+        }
+
+        [, $scale] = $this->parseNumericMetaFromColumnType($column);
+
+        return $scale;
+    }
+
+    private function parseNumericMetaFromColumnType(array $column): array
+    {
+        if (empty($column['COLUMN_TYPE'])) {
+            return [null, null];
+        }
+
+        if (preg_match('/\((\d+)(?:,(\d+))?\)/', $column['COLUMN_TYPE'], $matches)) {
+            $precision = isset($matches[1]) ? (int) $matches[1] : null;
+            $scale = isset($matches[2]) ? (int) $matches[2] : null;
+
+            return [$precision, $scale];
+        }
+
+        return [null, null];
+    }
+
     private function getColumnDefinition(array $columns, string $columnName): ?array
     {
         foreach ($columns as $column) {
@@ -907,10 +950,22 @@ PHP;
 
         $columnAttr = "    #[ORM\\Column(name: \"{$column['COLUMN_NAME']}\", type: $ormType";
 
-        if (preg_match('/char|string/', $column['DATA_TYPE'])) {
-            if (preg_match('/\\((\\d+)\\)/', $column['COLUMN_TYPE'], $matches)) {
-                $length = $matches[1];
+        if ($this->columnSupportsLength($column['DATA_TYPE'])) {
+            $length = $this->resolveStringLength($column);
+            if ($length !== null) {
                 $columnAttr .= ", length: $length";
+            }
+        }
+
+        if ($this->isDecimalColumn($column)) {
+            $precision = $this->resolveNumericPrecision($column);
+            $scale = $this->resolveNumericScale($column);
+
+            if ($precision !== null) {
+                $columnAttr .= ", precision: $precision";
+            }
+            if ($scale !== null) {
+                $columnAttr .= ", scale: $scale";
             }
         }
 

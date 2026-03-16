@@ -11,6 +11,7 @@ use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Process\Process;
 
@@ -38,12 +39,15 @@ class GenerateEntitiesCommand extends Command
 
     protected function configure(): void
     {
-        $this->addArgument('output-dir', InputArgument::REQUIRED, 'Répertoire de sortie pour les entités générées');
+        $this
+            ->addArgument('output-dir', InputArgument::REQUIRED, 'Répertoire de sortie pour les entités générées')
+            ->addOption('force', null, InputOption::VALUE_NONE, 'Écrase les entités et repositories existants');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $outputDir = $input->getArgument('output-dir');
+        $force = (bool) $input->getOption('force');
         $normalizedOutputDir = rtrim($outputDir, '/\\');
         $repositoryBaseDir = dirname($normalizedOutputDir) . DIRECTORY_SEPARATOR . 'Repository';
 
@@ -112,7 +116,8 @@ class GenerateEntitiesCommand extends Command
             $manyToManyRelations = $this->relationshipAnalyzer->getManyToManyRelations($table);
             $uniqueConstraints = $data['uniqueConstraints'] ?? [];
 
-            if (!file_exists($entityPath)) {
+            $entityExisted = file_exists($entityPath);
+            if ($force || !$entityExisted) {
                 $entityCode = $this->entityGenerator->generateEntityCode(
                     $table,
                     $columns,
@@ -132,18 +137,21 @@ class GenerateEntitiesCommand extends Command
                     $relationInfo .= ' [' . count($manyToManyRelations) . ' ManyToMany]';
                 }
 
-                $output->writeln("✅ Entité générée : $className" . $relationInfo);
+                $actionLabel = $force && $entityExisted ? '♻️ Entité régénérée' : '✅ Entité générée';
+                $output->writeln("{$actionLabel} : $className" . $relationInfo);
             } else {
                 $output->writeln("⏭️  Entité déjà existante : $className");
             }
 
-            if (!file_exists($repositoryPath)) {
+            $repositoryExisted = file_exists($repositoryPath);
+            if ($force || !$repositoryExisted) {
                 if (!is_dir(dirname($repositoryPath))) {
                     mkdir(dirname($repositoryPath), 0777, true);
                 }
                 $repositoryCode = $this->entityGenerator->generateRepositoryCode($className);
                 file_put_contents($repositoryPath, $repositoryCode);
-                $output->writeln("✅ Repository généré : {$className}Repository");
+                $repoAction = $force && $repositoryExisted ? '♻️ Repository régénéré' : '✅ Repository généré';
+                $output->writeln("{$repoAction} : {$className}Repository");
             } else {
                 $output->writeln("⏭️  Repository déjà existant : {$className}Repository");
             }
