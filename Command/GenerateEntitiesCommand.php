@@ -7,6 +7,7 @@ namespace App\Bundle\DbMapperBundle\Command;
 use App\Bundle\DbMapperBundle\Service\SchemaExtractor;
 use App\Bundle\DbMapperBundle\Service\EntityGenerator;
 use App\Bundle\DbMapperBundle\Service\RelationshipAnalyzer;
+use App\Bundle\DbMapperBundle\Service\SchemaSynchronizer;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -25,15 +26,18 @@ class GenerateEntitiesCommand extends Command
     private SchemaExtractor $schemaExtractor;
     private EntityGenerator $entityGenerator;
     private RelationshipAnalyzer $relationshipAnalyzer;
+    private SchemaSynchronizer $schemaSynchronizer;
 
     public function __construct(
         SchemaExtractor $schemaExtractor,
         EntityGenerator $entityGenerator,
-        RelationshipAnalyzer $relationshipAnalyzer
+        RelationshipAnalyzer $relationshipAnalyzer,
+        SchemaSynchronizer $schemaSynchronizer
     ) {
         $this->schemaExtractor = $schemaExtractor;
         $this->entityGenerator = $entityGenerator;
         $this->relationshipAnalyzer = $relationshipAnalyzer;
+        $this->schemaSynchronizer = $schemaSynchronizer;
         parent::__construct();
     }
 
@@ -41,15 +45,23 @@ class GenerateEntitiesCommand extends Command
     {
         $this
             ->addArgument('output-dir', InputArgument::REQUIRED, 'Répertoire de sortie pour les entités générées')
-            ->addOption('force', null, InputOption::VALUE_NONE, 'Écrase les entités et repositories existants');
+            ->addOption('force', null, InputOption::VALUE_NONE, 'Écrase les entités et repositories existants')
+            ->addOption('schema-preview', null, InputOption::VALUE_NONE, 'Affiche le SQL que Doctrine exécuterait pour synchroniser la base avant la génération')
+            ->addOption('schema-sync', null, InputOption::VALUE_NONE, 'Applique automatiquement le diff SQL Doctrine avant la génération');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $outputDir = $input->getArgument('output-dir');
         $force = (bool) $input->getOption('force');
+        $previewSchema = (bool) $input->getOption('schema-preview');
+        $syncSchema = (bool) $input->getOption('schema-sync');
         $normalizedOutputDir = rtrim($outputDir, '/\\');
         $repositoryBaseDir = dirname($normalizedOutputDir) . DIRECTORY_SEPARATOR . 'Repository';
+
+        if ($previewSchema || $syncSchema) {
+            $this->handleSchemaSynchronization($output, $previewSchema, $syncSchema);
+        }
 
         if (!is_dir($outputDir)) {
             mkdir($outputDir, 0777, true);
@@ -187,4 +199,32 @@ class GenerateEntitiesCommand extends Command
         return Command::SUCCESS;
     }
 
+    private function handleSchemaSynchronization(OutputInterface $output, bool $preview, bool $synchronize): void
+    {
+        $pendingSql = $this->schemaSynchronizer->getPendingSql();
+
+        if (empty($pendingSql)) {
+            $output->writeln('<info>✅ Aucun diff Doctrine/BDD détecté avant la génération.</info>');
+
+            return;
         }
+
+        $output->writeln(sprintf('<comment>⚠️  %d requêtes SQL sont nécessaires pour aligner la base avec le mapping Doctrine.</comment>', count($pendingSql)));
+
+        if ($preview) {
+            foreach ($pendingSql as $sql) {
+                $output->writeln('  • ' . $sql);
+            }
+        }
+
+        if ($synchronize) {
+            $output->writeln('<info>🔧 Application des corrections SQL avant la génération...</info>');
+            $this->schemaSynchronizer->synchronize();
+            $output->writeln('<info>✅ Synchronisation Doctrine/BDD effectuée.</info>');
+
+            return;
+        }
+
+        $output->writeln('<comment>   Astuce: ajoutez --schema-sync pour appliquer automatiquement ces modifications.</comment>');
+    }
+}

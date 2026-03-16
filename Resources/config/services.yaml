@@ -14,10 +14,10 @@ services:
             $schemaExtractor: '@App\Bundle\DbMapperBundle\Service\SchemaExtractor'
             $entityGenerator: '@App\Bundle\DbMapperBundle\Service\EntityGenerator'
             $relationshipAnalyzer: '@App\Bundle\DbMapperBundle\Service\RelationshipAnalyzer'
+            $schemaSynchronizer: '@App\Bundle\DbMapperBundle\Service\SchemaSynchronizer'
         tags:
             - { name: 'console.command' }
 
-   
     App\Bundle\DbMapperBundle\Service\SchemaExplorer:
         arguments:
             - '@doctrine.dbal.default_connection'
@@ -38,3 +38,7 @@ services:
             - '@App\Bundle\DbMapperBundle\Service\DoctrineTypeRegistry'
             - '@App\Bundle\DbMapperBundle\Service\SchemaChangePlanner'
             - '@App\Bundle\DbMapperBundle\Service\SchemaModifier'
+
+    App\Bundle\DbMapperBundle\Service\SchemaSynchronizer:
+        arguments:
+            $entityManager: '@doctrine.orm.entity_manager'
