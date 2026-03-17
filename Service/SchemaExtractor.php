@@ -76,7 +76,7 @@ class SchemaExtractor
 
         try {
             $sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY, IS_NULLABLE, COLUMN_TYPE,
-                           CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE
+                           CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, EXTRA
                     FROM information_schema.columns
                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?";
             $result = $this->connection->fetchAllAssociative($sql, [$table]);
@@ -116,7 +116,8 @@ class SchemaExtractor
             $sql = "SELECT COLUMN_NAME FROM information_schema.key_column_usage
                     WHERE TABLE_SCHEMA = DATABASE()
                       AND TABLE_NAME = ?
-                      AND CONSTRAINT_NAME = 'PRIMARY'";
+                      AND CONSTRAINT_NAME = 'PRIMARY'
+                    ORDER BY ORDINAL_POSITION";
             $result = $this->connection->fetchAllAssociative($sql, [$table]);
 
             return array_column($result, 'COLUMN_NAME');
@@ -207,6 +208,49 @@ class SchemaExtractor
         } catch (DBALException $e) {
             throw new SchemaExtractionException(
                 sprintf('Failed to retrieve unique constraints for table "%s": %s', $table, $e->getMessage()),
+                0,
+                $e
+            );
+        }
+    }
+
+    /**
+     * Retrieves all non-primary indexes for a given table.
+     *
+     * @param string $table The table name
+     *
+     * @return array<string, array<string, mixed>> Indexed by column name: INDEX_NAME, NON_UNIQUE
+     *
+     * @throws SchemaExtractionException If query fails
+     */
+    public function getIndexes(string $table): array
+    {
+        if (empty($table)) {
+            throw new SchemaExtractionException('Table name cannot be empty');
+        }
+
+        try {
+            $sql = "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE
+                    FROM information_schema.statistics
+                    WHERE TABLE_SCHEMA = DATABASE()
+                      AND TABLE_NAME = ?
+                      AND INDEX_NAME != 'PRIMARY'
+                    ORDER BY SEQ_IN_INDEX";
+            $rows = $this->connection->fetchAllAssociative($sql, [$table]);
+
+            // Indexer par nom de colonne pour faciliter la recherche
+            $indexes = [];
+            foreach ($rows as $row) {
+                $indexes[$row['COLUMN_NAME']] = [
+                    'INDEX_NAME' => $row['INDEX_NAME'],
+                    'NON_UNIQUE' => $row['NON_UNIQUE'],
+                ];
+            }
+
+            return $indexes;
+        } catch (DBALException $e) {
+            throw new SchemaExtractionException(
+                sprintf('Failed to retrieve indexes for table "%s": %s', $table, $e->getMessage()),
                 0,
                 $e
             );
