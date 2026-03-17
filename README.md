@@ -26,16 +26,15 @@ Configure your MySQL connection in `.env`:
 DATABASE_URL="mysql://user:password@localhost:3306/my_database"
 ```
 
-Optionally, you can configure ignored tables in `config/packages/db_mapper.yaml`:
+Optionally, you can configure additional tables to ignore in `config/packages/db_mapper.yaml`:
 
 ```yaml
 db_mapper:
     ignored_tables:
-        - messenger_messages   # ignored by default
         - another_system_table
 ```
 
-> By default, `messenger_messages` (used by Symfony Messenger) is automatically ignored during generation.
+> `messenger_messages` (used by Symfony Messenger) is automatically ignored by default.
 
 ### 🚀 Usage
 
@@ -192,7 +191,6 @@ The change plan has been cleared.
 - ✅ `add`/`remove` methods for collections
 - ✅ Repositories
 - ✅ Automatic post-generation database synchronization
-- ✅ Configurable system table exclusion (`messenger_messages`, etc.)
 
 
 ### 📝 Requirements
@@ -232,16 +230,15 @@ Configurez votre connexion MySQL dans `.env` :
 DATABASE_URL="mysql://user:password@localhost:3306/ma_base"
 ```
 
-Optionnellement, vous pouvez configurer les tables à ignorer dans `config/packages/db_mapper.yaml` :
+Optionnellement, vous pouvez configurer des tables supplémentaires à ignorer dans `config/packages/db_mapper.yaml` :
 
 ```yaml
 db_mapper:
     ignored_tables:
-        - messenger_messages   # ignorée par défaut
         - une_autre_table_systeme
 ```
 
-> Par défaut, `messenger_messages` (utilisée par Symfony Messenger) est automatiquement ignorée lors de la génération.
+> `messenger_messages` (utilisée par Symfony Messenger) est automatiquement ignorée par défaut.
 
 ### 🚀 Utilisation
 
@@ -398,8 +395,6 @@ Le plan de changements a été vidé.
 - ✅ Méthodes `add`/`remove` pour les collections
 - ✅ Repositories
 - ✅ Synchronisation automatique post-génération de la base de données
-- ✅ Exclusion configurable des tables système (`messenger_messages`, etc.)
-
 
 ### 📝 Prérequis
 
