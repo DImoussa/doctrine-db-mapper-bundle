@@ -15,6 +15,7 @@ services:
             $entityGenerator: '@App\Bundle\DbMapperBundle\Service\EntityGenerator'
             $relationshipAnalyzer: '@App\Bundle\DbMapperBundle\Service\RelationshipAnalyzer'
             $schemaSynchronizer: '@App\Bundle\DbMapperBundle\Service\SchemaSynchronizer'
+            $ignoredTables: '%db_mapper.ignored_tables%'
         tags:
             - { name: 'console.command' }
 

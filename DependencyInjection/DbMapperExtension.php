@@ -22,7 +22,7 @@ class DbMapperExtension extends Extension
     /**
      * {@inheritdoc}
      *
-     * 
+     *
      * @throws \Exception
      */
     public function load(array $configs, ContainerBuilder $container): void
@@ -36,6 +36,7 @@ class DbMapperExtension extends Extension
         $container->setParameter('db_mapper.skip_existing', $config['skip_existing']);
         $container->setParameter('db_mapper.detect_many_to_many', $config['detect_many_to_many']);
         $container->setParameter('db_mapper.generate_bidirectional', $config['generate_bidirectional']);
+        $container->setParameter('db_mapper.ignored_tables', $config['ignored_tables']);
 
         $loader = new FileLocator(__DIR__ . '/../Resources/config');
         $yamlLoader = new YamlFileLoader($container, $loader);

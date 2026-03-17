@@ -57,6 +57,11 @@ class Configuration implements ConfigurationInterface
                     ->info('Generate bidirectional relationships (OneToMany/ManyToOne)')
                     ->defaultTrue()
                 ->end()
+                ->arrayNode('ignored_tables')
+                    ->info('Tables to completely ignore during entity generation (system tables, framework tables, etc.)')
+                    ->scalarPrototype()->end()
+                    ->defaultValue(['messenger_messages'])
+                ->end()
             ->end();
 
         return $treeBuilder;
