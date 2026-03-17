@@ -69,7 +69,8 @@ PHP;
         array $foreignKeys = [],
         array $inverseRelations = [],
         array $manyToManyRelations = [],
-        array $uniqueConstraints = []
+        array $uniqueConstraints = [],
+        array $indexes = []
     ): string
     {
         $className = $this->snakeToCamel($tableName, true);
@@ -598,8 +599,14 @@ PHP;
 
         if ($isPrimaryKey) {
             $attributes[] = "    #[ORM\Id]";
+            $isAutoIncrement = str_contains(strtolower($column['EXTRA'] ?? ''), 'auto_increment');
             if (in_array($column['DATA_TYPE'], ['int', 'bigint', 'smallint'])) {
-                $attributes[] = "    #[ORM\GeneratedValue]";
+                if ($isAutoIncrement) {
+                    $attributes[] = "    #[ORM\GeneratedValue]";
+                } else {
+                    // PK entière sans AUTO_INCREMENT en DB → on ne force pas le changement
+                    $attributes[] = "    #[ORM\GeneratedValue(strategy: 'NONE')]";
+                }
             }
             // Les IDs auto-générés sont toujours nullable avant persist
             $nullable = true;

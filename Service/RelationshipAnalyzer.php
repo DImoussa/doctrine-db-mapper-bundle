@@ -37,7 +37,10 @@ class RelationshipAnalyzer
 
             // Détecter les tables ManyToMany (tables d'association pures)
             if ($this->isPureManyToManyTable($columns, $primaryKeys, $foreignKeys)) {
-                $this->manyToManyTables[$tableName] = $foreignKeys;
+                $this->manyToManyTables[$tableName] = [
+                    'foreignKeys' => $foreignKeys,
+                    'primaryKeys' => $primaryKeys, // ordre réel de la PK composite en DB
+                ];
             }
 
             // Indexer les relations inverses
@@ -168,7 +171,8 @@ class RelationshipAnalyzer
     {
         $this->manyToManyPairCounts = [];
 
-        foreach ($this->manyToManyTables as $foreignKeys) {
+        foreach ($this->manyToManyTables as $tableData) {
+            $foreignKeys = $tableData['foreignKeys'];
             if (count($foreignKeys) !== 2) {
                 continue;
             }
@@ -181,7 +185,10 @@ class RelationshipAnalyzer
             $this->manyToManyPairCounts[$pairKey] = ($this->manyToManyPairCounts[$pairKey] ?? 0) + 1;
         }
 
-        foreach ($this->manyToManyTables as $joinTable => $foreignKeys) {
+        foreach ($this->manyToManyTables as $joinTable => $tableData) {
+            $foreignKeys = $tableData['foreignKeys'];
+            $primaryKeys = $tableData['primaryKeys'];
+
             if (count($foreignKeys) !== 2) {
                 continue;
             }
@@ -198,11 +205,30 @@ class RelationshipAnalyzer
             $pairKey = $this->buildPairKey($tableA, $tableB);
             $forceSuffix = ($this->manyToManyPairCounts[$pairKey] ?? 0) > 1;
 
-            // Déterminer le côté propriétaire (ordre alphabétique stable)
-            $ownerTable = strcasecmp($tableA, $tableB) <= 0 ? $tableA : $tableB;
-            $inverseTable = $ownerTable === $tableA ? $tableB : $tableA;
-            $ownerFk = $ownerTable === $tableA ? $fkA : $fkB;
-            $inverseFk = $ownerFk === $fkA ? $fkB : $fkA;
+            // Déterminer le côté propriétaire en se basant sur l'ordre réel des colonnes PK dans la DB
+            // La première colonne de la PK composite appartient au propriétaire
+            $firstPkColumn = $primaryKeys[0] ?? null;
+            if ($firstPkColumn !== null && $fkA['COLUMN_NAME'] === $firstPkColumn) {
+                // fkA est la première colonne PK → table référencée par fkA est le propriétaire
+                $ownerFk = $fkA;
+                $inverseFk = $fkB;
+            } elseif ($firstPkColumn !== null && $fkB['COLUMN_NAME'] === $firstPkColumn) {
+                // fkB est la première colonne PK → table référencée par fkB est le propriétaire
+                $ownerFk = $fkB;
+                $inverseFk = $fkA;
+            } else {
+                // Fallback : ordre alphabétique stable si PK non déterminable
+                if (strcasecmp($tableA, $tableB) <= 0) {
+                    $ownerFk = $fkA;
+                    $inverseFk = $fkB;
+                } else {
+                    $ownerFk = $fkB;
+                    $inverseFk = $fkA;
+                }
+            }
+
+            $ownerTable = $ownerFk['REFERENCED_TABLE_NAME'];
+            $inverseTable = $inverseFk['REFERENCED_TABLE_NAME'];
 
             $ownerProperty = $this->generateRelationPropertyName($ownerTable, $inverseTable, $joinTable, $forceSuffix);
             $inverseProperty = $this->generateRelationPropertyName($inverseTable, $ownerTable, $joinTable, $forceSuffix);
