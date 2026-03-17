@@ -26,16 +26,6 @@ Configure your MySQL connection in `.env`:
 DATABASE_URL="mysql://user:password@localhost:3306/my_database"
 ```
 
-Optionally, you can configure additional tables to ignore in `config/packages/db_mapper.yaml`:
-
-```yaml
-db_mapper:
-    ignored_tables:
-        - another_system_table
-```
-
-> `messenger_messages` (used by Symfony Messenger) is automatically ignored by default.
-
 ### 🚀 Usage
 
 #### Generate all entities
@@ -229,16 +219,6 @@ Configurez votre connexion MySQL dans `.env` :
 ```env
 DATABASE_URL="mysql://user:password@localhost:3306/ma_base"
 ```
-
-Optionnellement, vous pouvez configurer des tables supplémentaires à ignorer dans `config/packages/db_mapper.yaml` :
-
-```yaml
-db_mapper:
-    ignored_tables:
-        - une_autre_table_systeme
-```
-
-> `messenger_messages` (utilisée par Symfony Messenger) est automatiquement ignorée par défaut.
 
 ### 🚀 Utilisation
 
