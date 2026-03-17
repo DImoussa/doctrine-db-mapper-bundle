@@ -26,6 +26,17 @@ Configure your MySQL connection in `.env`:
 DATABASE_URL="mysql://user:password@localhost:3306/my_database"
 ```
 
+Optionally, you can configure ignored tables in `config/packages/db_mapper.yaml`:
+
+```yaml
+db_mapper:
+    ignored_tables:
+        - messenger_messages   # ignored by default
+        - another_system_table
+```
+
+> By default, `messenger_messages` (used by Symfony Messenger) is automatically ignored during generation.
+
 ### 🚀 Usage
 
 #### Generate all entities
@@ -48,25 +59,26 @@ php bin/console dbmapper:generate-entities src/Entity --schema-preview
 
 This shows the SQL Doctrine would run to align the database before entities are regenerated.
 
-#### Auto-synchronize database before generation
-
-```bash
-php bin/console dbmapper:generate-entities src/Entity --schema-sync
-```
-
-Executes the pending SQL diff (same as `--schema-preview`) before regenerating entities, ensuring mappings and schema stay in sync.
-
 ### 📋 Output example
 
 ```
 📊 Analyzing the database schema...
 🔗 Analyzing relationships between tables...
+  → ManyToMany association tables detected: user_roles, post_tags
 ⚙️  Generating entities and repositories...
-✅ User.php generated
-✅ Post.php generated
+⏭️  System table ignored: messenger_messages (configured in ignored_tables)
+⏭️  Association table ignored: user_roles (handled as ManyToMany)
+✅ User.php generated [2 OneToMany] [1 ManyToMany]
+✅ Post.php generated [1 OneToMany] [1 ManyToMany]
 ✅ Comment.php generated
-🎉 3 entities successfully created!
+🧹 Clearing Symfony cache...
+✅ Symfony cache cleared.
+🔄 Synchronizing database with generated mapping...
+✅ Database synchronized with Doctrine mapping.
+✨ Generation completed successfully!
 ```
+
+> The bundle automatically synchronizes the database after generation to resolve cosmetic differences (index naming, `text` → `longtext`, etc.).
 
 
 #### Manage the database (modify, view the schema...)
@@ -174,9 +186,13 @@ The change plan has been cleared.
 
 - ✅ Doctrine entities with correct PHP types
 - ✅ Automatic relationships (OneToMany, ManyToOne, ManyToMany)
+- ✅ Smart `AUTO_INCREMENT` detection (no forced changes on non-auto-increment PKs)
+- ✅ Correct ManyToMany composite PK ordering (matches the real database)
 - ✅ Getters and setters
 - ✅ `add`/`remove` methods for collections
 - ✅ Repositories
+- ✅ Automatic post-generation database synchronization
+- ✅ Configurable system table exclusion (`messenger_messages`, etc.)
 
 
 ### 📝 Requirements
@@ -216,6 +232,17 @@ Configurez votre connexion MySQL dans `.env` :
 DATABASE_URL="mysql://user:password@localhost:3306/ma_base"
 ```
 
+Optionnellement, vous pouvez configurer les tables à ignorer dans `config/packages/db_mapper.yaml` :
+
+```yaml
+db_mapper:
+    ignored_tables:
+        - messenger_messages   # ignorée par défaut
+        - une_autre_table_systeme
+```
+
+> Par défaut, `messenger_messages` (utilisée par Symfony Messenger) est automatiquement ignorée lors de la génération.
+
 ### 🚀 Utilisation
 
 #### Générer toutes les entités
@@ -238,25 +265,26 @@ php bin/console dbmapper:generate-entities src/Entity --schema-preview
 
 Affiche les requêtes SQL que Doctrine exécuterait pour synchroniser la base avant la régénération des entités.
 
-#### Synchroniser automatiquement la base avant la génération
-
-```bash
-php bin/console dbmapper:generate-entities src/Entity --schema-sync
-```
-
-Applique automatiquement ce diff SQL avant de générer les entités, afin de garder schéma et mapping alignés.
-
 ### 📋 Exemple de sortie
 
 ```
 📊 Analyse du schéma de la base de données...
 🔗 Analyse des relations entre tables...
+  → Tables d'association ManyToMany détectées: user_roles, post_tags
 ⚙️  Génération des entités et repositories...
-✅ User.php généré
-✅ Post.php généré
+⏭️  Table système ignorée: messenger_messages (configurée dans ignored_tables)
+⏭️  Table d'association ignorée: user_roles (gérée comme ManyToMany)
+✅ User.php généré [2 OneToMany] [1 ManyToMany]
+✅ Post.php généré [1 OneToMany] [1 ManyToMany]
 ✅ Comment.php généré
-🎉 3 entités créées avec succès !
+🧹 Nettoyage du cache Symfony...
+✅ Cache Symfony nettoyé avec succès.
+🔄 Synchronisation de la base de données avec le mapping généré...
+✅ Base de données synchronisée avec le mapping Doctrine.
+✨ Génération terminée avec succès !
 ```
+
+> Le bundle synchronise automatiquement la base après génération pour résoudre les différences cosmétiques (nommage d'index, `text` → `longtext`, etc.).
 
 
 #### Gérer la base de donnée (modification, visualisation de la base...)
@@ -364,9 +392,13 @@ Le plan de changements a été vidé.
 
 - ✅ Entités Doctrine avec types PHP corrects
 - ✅ Relations automatiques (OneToMany, ManyToOne, ManyToMany)
+- ✅ Détection intelligente de l'`AUTO_INCREMENT` (pas de modification forcée sur les PK non auto-incrémentées)
+- ✅ Ordre correct des PK composites ManyToMany (correspond à la base réelle)
 - ✅ Getters et setters
 - ✅ Méthodes `add`/`remove` pour les collections
 - ✅ Repositories
+- ✅ Synchronisation automatique post-génération de la base de données
+- ✅ Exclusion configurable des tables système (`messenger_messages`, etc.)
 
 
 ### 📝 Prérequis
