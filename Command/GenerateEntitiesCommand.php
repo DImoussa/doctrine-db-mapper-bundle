@@ -49,6 +49,7 @@ class GenerateEntitiesCommand extends Command
         $this
             ->addArgument('output-dir', InputArgument::REQUIRED, 'Répertoire de sortie pour les entités générées')
             ->addOption('force', null, InputOption::VALUE_NONE, 'Écrase les entités et repositories existants')
+            ->addOption('table', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Ne régénère que les tables spécifiées (ex: --table=users --table=posts)')
             ->addOption('schema-preview', null, InputOption::VALUE_NONE, 'Affiche le SQL que Doctrine exécuterait pour synchroniser la base avant la génération')
             ->addOption('schema-sync', null, InputOption::VALUE_NONE, 'Applique automatiquement le diff SQL Doctrine avant la génération');
     }
@@ -57,6 +58,7 @@ class GenerateEntitiesCommand extends Command
     {
         $outputDir = $input->getArgument('output-dir');
         $force = (bool) $input->getOption('force');
+        $targetTables = array_map('strtolower', $input->getOption('table') ?? []);
         $previewSchema = (bool) $input->getOption('schema-preview');
         $syncSchema = (bool) $input->getOption('schema-sync');
         $normalizedOutputDir = rtrim($outputDir, '/\\');
@@ -71,6 +73,12 @@ class GenerateEntitiesCommand extends Command
         }
 
         $tables = $this->schemaExtractor->getTables();
+
+        // Si --table est spécifié, forcer --force sur ces tables uniquement
+        if (!empty($targetTables)) {
+            $output->writeln('<comment>🎯 Mode ciblé : seules les tables [' . implode(', ', $input->getOption('table')) . '] seront régénérées.</comment>');
+            $force = true;
+        }
 
         // === PHASE 1: Collecter toutes les données des tables ===
         $output->writeln('<info>📊 Analyse du schéma de la base de données...</info>');
@@ -117,6 +125,11 @@ class GenerateEntitiesCommand extends Command
             // Skip les tables système/framework configurées à ignorer
             if (in_array(strtolower($table), $this->ignoredTables, true)) {
                 $output->writeln("<comment>⏭️  Table système ignorée: $table (configurée dans ignored_tables)</comment>");
+                continue;
+            }
+
+            // Skip les tables non ciblées si --table est utilisé
+            if (!empty($targetTables) && !in_array(strtolower($table), $targetTables, true)) {
                 continue;
             }
 
