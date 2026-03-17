@@ -40,6 +40,22 @@ php bin/console dbmapper:generate-entities src/Entity
 php bin/console dbmapper:generate-entities src/Entity --table=users
 ```
 
+#### Preview pending schema diff (optional safety step before generation)
+
+```bash
+php bin/console dbmapper:generate-entities src/Entity --schema-preview
+```
+
+This shows the SQL Doctrine would run to align the database before entities are regenerated.
+
+#### Auto-synchronize database before generation
+
+```bash
+php bin/console dbmapper:generate-entities src/Entity --schema-sync
+```
+
+Executes the pending SQL diff (same as `--schema-preview`) before regenerating entities, ensuring mappings and schema stay in sync.
+
 ### 📋 Output example
 
 ```
@@ -213,6 +229,22 @@ php bin/console dbmapper:generate-entities src/Entity
 ```bash
 php bin/console dbmapper:generate-entities src/Entity --table=users
 ```
+
+#### Prévisualiser le diff SQL (optionnel avant la génération)
+
+```bash
+php bin/console dbmapper:generate-entities src/Entity --schema-preview
+```
+
+Affiche les requêtes SQL que Doctrine exécuterait pour synchroniser la base avant la régénération des entités.
+
+#### Synchroniser automatiquement la base avant la génération
+
+```bash
+php bin/console dbmapper:generate-entities src/Entity --schema-sync
+```
+
+Applique automatiquement ce diff SQL avant de générer les entités, afin de garder schéma et mapping alignés.
 
 ### 📋 Exemple de sortie
 

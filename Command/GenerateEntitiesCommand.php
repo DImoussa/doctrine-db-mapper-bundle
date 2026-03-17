@@ -27,17 +27,20 @@ class GenerateEntitiesCommand extends Command
     private EntityGenerator $entityGenerator;
     private RelationshipAnalyzer $relationshipAnalyzer;
     private SchemaSynchronizer $schemaSynchronizer;
+    private array $ignoredTables;
 
     public function __construct(
         SchemaExtractor $schemaExtractor,
         EntityGenerator $entityGenerator,
         RelationshipAnalyzer $relationshipAnalyzer,
-        SchemaSynchronizer $schemaSynchronizer
+        SchemaSynchronizer $schemaSynchronizer,
+        array $ignoredTables = ['messenger_messages']
     ) {
         $this->schemaExtractor = $schemaExtractor;
         $this->entityGenerator = $entityGenerator;
         $this->relationshipAnalyzer = $relationshipAnalyzer;
         $this->schemaSynchronizer = $schemaSynchronizer;
+        $this->ignoredTables = array_map('strtolower', $ignoredTables);
         parent::__construct();
     }
 
@@ -74,10 +77,16 @@ class GenerateEntitiesCommand extends Command
         $allTablesData = [];
 
         foreach ($tables as $table) {
+            // Skip les tables système/framework configurées à ignorer
+            if (in_array(strtolower($table), $this->ignoredTables, true)) {
+                continue;
+            }
+
             $columns = $this->schemaExtractor->getTableColumns($table);
             $primaryKeys = $this->schemaExtractor->getPrimaryKeys($table);
             $foreignKeys = $this->schemaExtractor->getForeignKeys($table);
             $uniqueConstraints = $this->schemaExtractor->getUniqueConstraints($table);
+            $indexes = $this->schemaExtractor->getIndexes($table);
 
             if (empty($primaryKeys)) {
                 $primaryKeys = $this->entityGenerator->detectPrimaryKey($table, $columns);
@@ -87,7 +96,8 @@ class GenerateEntitiesCommand extends Command
                 'columns' => $columns,
                 'primaryKeys' => $primaryKeys,
                 'foreignKeys' => $foreignKeys,
-                'uniqueConstraints' => $uniqueConstraints
+                'uniqueConstraints' => $uniqueConstraints,
+                'indexes' => $indexes,
             ];
         }
 
@@ -104,6 +114,12 @@ class GenerateEntitiesCommand extends Command
         $output->writeln('<info>⚙️  Génération des entités et repositories...</info>');
 
         foreach ($tables as $table) {
+            // Skip les tables système/framework configurées à ignorer
+            if (in_array(strtolower($table), $this->ignoredTables, true)) {
+                $output->writeln("<comment>⏭️  Table système ignorée: $table (configurée dans ignored_tables)</comment>");
+                continue;
+            }
+
             // Skip les tables d'association ManyToMany pures
             if ($this->relationshipAnalyzer->isManyToManyTable($table)) {
                 $output->writeln("<comment>⏭️  Table d'association ignorée: $table (gérée comme ManyToMany)</comment>");
@@ -127,6 +143,7 @@ class GenerateEntitiesCommand extends Command
             $inverseRelations = $this->relationshipAnalyzer->getInverseRelations($table);
             $manyToManyRelations = $this->relationshipAnalyzer->getManyToManyRelations($table);
             $uniqueConstraints = $data['uniqueConstraints'] ?? [];
+            $indexes = $data['indexes'] ?? [];
 
             $entityExisted = file_exists($entityPath);
             if ($force || !$entityExisted) {
@@ -137,7 +154,8 @@ class GenerateEntitiesCommand extends Command
                     $foreignKeys,
                     $inverseRelations,
                     $manyToManyRelations,
-                    $uniqueConstraints
+                    $uniqueConstraints,
+                    $indexes
                 );
                 file_put_contents($entityPath, $entityCode);
 
@@ -193,6 +211,31 @@ class GenerateEntitiesCommand extends Command
             }
         } else {
             $output->writeln('<info>✅ Cache Symfony nettoyé avec succès.</info>');
+        }
+
+        // === PHASE 5: Synchronisation post-génération ===
+        // Aligner automatiquement la base de données avec le mapping Doctrine généré
+        // (résout les diffs cosmétiques : text→longtext, renommage d'index FK, etc.)
+        $output->writeln('<info>🔄 Synchronisation de la base de données avec le mapping généré...</info>');
+
+        $syncProcess = new Process(['php', 'bin/console', 'doctrine:schema:update', '--force', '--env=dev']);
+        $syncProcess->setTimeout(60);
+        $syncProcess->run();
+
+        if ($syncProcess->isSuccessful()) {
+            $syncOutput = trim($syncProcess->getOutput());
+            if (str_contains($syncOutput, 'Nothing to update')) {
+                $output->writeln('<info>✅ Base de données déjà synchronisée.</info>');
+            } else {
+                $output->writeln('<info>✅ Base de données synchronisée avec le mapping Doctrine.</info>');
+            }
+        } else {
+            $output->writeln('<comment>⚠️  La synchronisation automatique a échoué.</comment>');
+            $errorOutput = trim($syncProcess->getErrorOutput());
+            if (!empty($errorOutput)) {
+                $output->writeln("<comment>   Erreur : $errorOutput</comment>");
+            }
+            $output->writeln('<comment>   Vous pouvez synchroniser manuellement avec : php bin/console doctrine:schema:update --force</comment>');
         }
 
         $output->writeln('<info>✨ Génération terminée avec succès !</info>');
