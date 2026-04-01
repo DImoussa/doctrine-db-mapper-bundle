@@ -180,7 +180,7 @@ The change plan has been cleared.
 - ✅ Getters and setters
 - ✅ `add`/`remove` methods for collections
 - ✅ Repositories
-- ✅ Automatic post-generation database synchronization
+- ✅ Automatic post-generation database synchronization (handles index renaming, type adjustments, and composite PK changes with FK constraints)
 
 
 ### 📝 Requirements
@@ -374,7 +374,7 @@ Le plan de changements a été vidé.
 - ✅ Getters et setters
 - ✅ Méthodes `add`/`remove` pour les collections
 - ✅ Repositories
-- ✅ Synchronisation automatique post-génération de la base de données
+- ✅ Synchronisation automatique post-génération (gère le renommage d'index, les ajustements de types et les changements de PK composites avec contraintes FK)
 
 ### 📝 Prérequis
 
