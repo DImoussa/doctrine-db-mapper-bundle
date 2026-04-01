@@ -48,6 +48,18 @@ php bin/console dbmapper:generate-entities src/Entity --schema-preview
 
 This shows the SQL Doctrine would run to align the database before entities are regenerated.
 
+#### Regenerate without losing your custom code
+
+When an entity file already exists, the bundle automatically merges the generated code with your existing file. Custom methods, non-ORM properties, interfaces, traits, and `use` statements are preserved.
+
+```bash
+# Regenerate all entities (custom code is preserved)
+php bin/console dbmapper:generate-entities src/Entity
+
+# Regenerate a specific table only
+php bin/console dbmapper:generate-entities src/Entity --table=users
+```
+
 ### 📋 Output example
 
 ```
@@ -180,6 +192,7 @@ The change plan has been cleared.
 - ✅ Getters and setters
 - ✅ `add`/`remove` methods for collections
 - ✅ Repositories
+- ✅ Smart entity merging on regeneration (preserves custom methods, non-ORM properties, interfaces, traits, and `use` statements)
 - ✅ Automatic post-generation database synchronization (handles index renaming, type adjustments, and composite PK changes with FK constraints)
 
 
@@ -241,6 +254,18 @@ php bin/console dbmapper:generate-entities src/Entity --schema-preview
 ```
 
 Affiche les requêtes SQL que Doctrine exécuterait pour synchroniser la base avant la régénération des entités.
+
+#### Régénérer sans perdre votre code custom
+
+Lorsqu'un fichier d'entité existe déjà, le bundle fusionne automatiquement le code généré avec le fichier existant. Les méthodes custom, les propriétés non-ORM, les interfaces, les traits et les `use` statements sont préservés.
+
+```bash
+# Régénérer toutes les entités (le code custom est préservé)
+php bin/console dbmapper:generate-entities src/Entity
+
+# Régénérer une table spécifique uniquement
+php bin/console dbmapper:generate-entities src/Entity --table=users
+```
 
 ### 📋 Exemple de sortie
 
@@ -374,6 +399,7 @@ Le plan de changements a été vidé.
 - ✅ Getters et setters
 - ✅ Méthodes `add`/`remove` pour les collections
 - ✅ Repositories
+- ✅ Fusion intelligente des entités lors d'une régénération (préserve les méthodes custom, les propriétés non-ORM, les interfaces, les traits et les `use` statements)
 - ✅ Synchronisation automatique post-génération (gère le renommage d'index, les ajustements de types et les changements de PK composites avec contraintes FK)
 
 ### 📝 Prérequis
