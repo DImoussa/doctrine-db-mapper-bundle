@@ -393,6 +393,8 @@ MIT
 - Email: moussadou128@gmail.com
 - GitHub: [@DImoussa](https://github.com/DImoussa)
 
+---
+
 [![Latest Stable Version](https://poser.pugx.org/dimoussa/doctrine-db-mapper-bundle/v/stable)](https://packagist.org/packages/dimoussa/doctrine-db-mapper-bundle)
 [![Total Downloads](https://poser.pugx.org/dimoussa/doctrine-db-mapper-bundle/downloads)](https://packagist.org/packages/dimoussa/doctrine-db-mapper-bundle)
 [![License](https://poser.pugx.org/dimoussa/doctrine-db-mapper-bundle/license)](https://packagist.org/packages/dimoussa/doctrine-db-mapper-bundle)
