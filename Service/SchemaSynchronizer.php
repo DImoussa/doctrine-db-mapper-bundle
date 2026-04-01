@@ -10,9 +10,6 @@ use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 
-/**
- * Provides Doctrine schema diff and synchronization helpers.
- */
 class SchemaSynchronizer
 {
     private EntityManagerInterface $entityManager;
@@ -22,11 +19,7 @@ class SchemaSynchronizer
         $this->entityManager = $entityManager;
     }
 
-    /**
-     * Returns pending SQL statements required to sync the Doctrine mapping with the actual database.
-     *
-     * @return array<int, string>
-     */
+    /** @return array<int, string> */
     public function getPendingSql(): array
     {
         $metadata = $this->entityManager->getMetadataFactory()->getAllMetadata();
@@ -35,15 +28,14 @@ class SchemaSynchronizer
             return [];
         }
 
-        $schemaTool = new SchemaTool($this->entityManager);
-
-        return $schemaTool->getUpdateSchemaSql($metadata, false);
+        return (new SchemaTool($this->entityManager))->getUpdateSchemaSql($metadata, false);
     }
 
     /**
-     * Applies the pending SQL statements and returns the executed queries.
+     * Applique les instructions SQL en attente et retourne celles exécutées.
      *
      * @return array<int, string>
+     * @throws SchemaSynchronizationException
      */
     public function synchronize(): array
     {
@@ -53,15 +45,13 @@ class SchemaSynchronizer
             return [];
         }
 
+        /** @var Connection $connection */
         $connection = $this->entityManager->getConnection();
-        \assert($connection instanceof Connection);
-
-        $foreignKeysTemporarilyDisabled = false;
+        $isMysql    = $connection->getDatabasePlatform() instanceof MySQLPlatform;
 
         try {
-            if ($connection->getDatabasePlatform() instanceof MySQLPlatform) {
+            if ($isMysql) {
                 $connection->executeStatement('SET FOREIGN_KEY_CHECKS=0');
-                $foreignKeysTemporarilyDisabled = true;
             }
 
             foreach ($sqlStatements as $sql) {
@@ -74,7 +64,7 @@ class SchemaSynchronizer
                 $exception
             );
         } finally {
-            if ($foreignKeysTemporarilyDisabled) {
+            if ($isMysql) {
                 $connection->executeStatement('SET FOREIGN_KEY_CHECKS=1');
             }
         }

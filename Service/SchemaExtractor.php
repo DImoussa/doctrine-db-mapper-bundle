@@ -8,65 +8,35 @@ use App\Bundle\DbMapperBundle\Exception\SchemaExtractionException;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception as DBALException;
 
-/**
- * Service for extracting database schema information.
- *
- * This service provides methods to retrieve tables, columns, primary keys,
- * and foreign keys from a MySQL database using Doctrine DBAL.
- *
- * @author Diallo Moussa <moussadou128@gmail.com>
- */
 class SchemaExtractor
 {
     private Connection $connection;
 
-    /**
-     * @param Connection $connection Doctrine DBAL connection to the database
-     */
     public function __construct(Connection $connection)
     {
         $this->connection = $connection;
     }
 
     /**
-     * Retrieves all table names from the current database.
-     *
-     * @return array<int, string> Array of table names
-     *
-     * @throws SchemaExtractionException If database query fails
+     * @return array<int, string>
+     * @throws SchemaExtractionException
      */
     public function getTables(): array
     {
         try {
-            $sql = "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE()";
-            $result = $this->connection->fetchAllAssociative($sql);
+            $result = $this->connection->fetchAllAssociative(
+                "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE()"
+            );
 
             return array_column($result, 'TABLE_NAME');
         } catch (DBALException $e) {
-            throw new SchemaExtractionException(
-                sprintf('Failed to retrieve tables from database: %s', $e->getMessage()),
-                0,
-                $e
-            );
+            throw new SchemaExtractionException('Failed to retrieve tables: ' . $e->getMessage(), 0, $e);
         }
     }
 
     /**
-     * Retrieves all columns for a given table.
-     *
-     * @param string $table The table name
-     *
-     * @return array<int, array<string, mixed>> Array of column definitions with keys:
-     *                                           - COLUMN_NAME: string
-     *                                           - DATA_TYPE: string
-     *                                           - COLUMN_KEY: string
-     *                                           - IS_NULLABLE: string ('YES' or 'NO')
-     *                                           - COLUMN_TYPE: string (raw MySQL definition)
-     *                                           - CHARACTER_MAXIMUM_LENGTH: int|null
-     *                                           - NUMERIC_PRECISION: int|null
-     *                                           - NUMERIC_SCALE: int|null
-     *
-     * @throws SchemaExtractionException If table doesn't exist or query fails
+     * @return array<int, array<string, mixed>>
+     * @throws SchemaExtractionException
      */
     public function getTableColumns(string $table): array
     {
@@ -75,36 +45,27 @@ class SchemaExtractor
         }
 
         try {
-            $sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY, IS_NULLABLE, COLUMN_TYPE,
-                           CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, EXTRA
-                    FROM information_schema.columns
-                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?";
-            $result = $this->connection->fetchAllAssociative($sql, [$table]);
+            $result = $this->connection->fetchAllAssociative(
+                "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY, IS_NULLABLE, COLUMN_TYPE,
+                        CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, EXTRA
+                 FROM information_schema.columns
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+                [$table]
+            );
 
             if (empty($result)) {
-                throw new SchemaExtractionException(
-                    sprintf('Table "%s" not found or has no columns', $table)
-                );
+                throw new SchemaExtractionException(sprintf('Table "%s" not found or has no columns', $table));
             }
 
             return $result;
         } catch (DBALException $e) {
-            throw new SchemaExtractionException(
-                sprintf('Failed to retrieve columns for table "%s": %s', $table, $e->getMessage()),
-                0,
-                $e
-            );
+            throw new SchemaExtractionException(sprintf('Failed to retrieve columns for "%s": %s', $table, $e->getMessage()), 0, $e);
         }
     }
 
     /**
-     * Retrieves primary key column names for a given table.
-     *
-     * @param string $table The table name
-     *
-     * @return array<int, string> Array of primary key column names
-     *
-     * @throws SchemaExtractionException If query fails
+     * @return array<int, string>
+     * @throws SchemaExtractionException
      */
     public function getPrimaryKeys(string $table): array
     {
@@ -113,37 +74,21 @@ class SchemaExtractor
         }
 
         try {
-            $sql = "SELECT COLUMN_NAME FROM information_schema.key_column_usage
-                    WHERE TABLE_SCHEMA = DATABASE()
-                      AND TABLE_NAME = ?
-                      AND CONSTRAINT_NAME = 'PRIMARY'
-                    ORDER BY ORDINAL_POSITION";
-            $result = $this->connection->fetchAllAssociative($sql, [$table]);
-
+            $result = $this->connection->fetchAllAssociative(
+                "SELECT COLUMN_NAME FROM information_schema.key_column_usage
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY'
+                 ORDER BY ORDINAL_POSITION",
+                [$table]
+            );
             return array_column($result, 'COLUMN_NAME');
         } catch (DBALException $e) {
-            throw new SchemaExtractionException(
-                sprintf('Failed to retrieve primary keys for table "%s": %s', $table, $e->getMessage()),
-                0,
-                $e
-            );
+            throw new SchemaExtractionException(sprintf('Failed to retrieve primary keys for "%s": %s', $table, $e->getMessage()), 0, $e);
         }
     }
 
     /**
-     * Retrieves foreign key definitions for a given table.
-     *
-     * This method deduplicates foreign keys to avoid processing the same
-     * foreign key multiple times (which can happen in some database setups).
-     *
-     * @param string $table The table name
-     *
-     * @return array<int, array<string, string>> Array of foreign key definitions with keys:
-     *                                            - COLUMN_NAME: string
-     *                                            - REFERENCED_TABLE_NAME: string
-     *                                            - REFERENCED_COLUMN_NAME: string
-     *
-     * @throws SchemaExtractionException If query fails
+     * @return array<int, array<string, string>>
+     * @throws SchemaExtractionException
      */
     public function getForeignKeys(string $table): array
     {
@@ -152,44 +97,33 @@ class SchemaExtractor
         }
 
         try {
-            $sql = "SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
-                    FROM information_schema.key_column_usage
-                    WHERE TABLE_SCHEMA = DATABASE()
-                      AND TABLE_NAME = ?
-                      AND REFERENCED_TABLE_NAME IS NOT NULL";
-            $fks = $this->connection->fetchAllAssociative($sql, [$table]);
+            $fks = $this->connection->fetchAllAssociative(
+                "SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+                 FROM information_schema.key_column_usage
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL",
+                [$table]
+            );
 
-            // Deduplicate foreign keys (avoid duplicates from information_schema)
+            // Dédoublonnage (information_schema peut retourner des doublons)
             $uniqueFks = [];
-            $seen = [];
+            $seen      = [];
             foreach ($fks as $fk) {
                 $key = $fk['COLUMN_NAME'] . '::' . $fk['REFERENCED_TABLE_NAME'] . '::' . $fk['REFERENCED_COLUMN_NAME'];
                 if (!isset($seen[$key])) {
                     $uniqueFks[] = $fk;
-                    $seen[$key] = true;
+                    $seen[$key]  = true;
                 }
             }
 
             return $uniqueFks;
         } catch (DBALException $e) {
-            throw new SchemaExtractionException(
-                sprintf('Failed to retrieve foreign keys for table "%s": %s', $table, $e->getMessage()),
-                0,
-                $e
-            );
+            throw new SchemaExtractionException(sprintf('Failed to retrieve foreign keys for "%s": %s', $table, $e->getMessage()), 0, $e);
         }
     }
 
     /**
-     * Retrieves unique constraints for a given table.
-     *
-     * @param string $table The table name
-     *
-     * @return array<int, array<string, mixed>> Array of unique constraints with keys:
-     *                                           - COLUMN_NAME: string
-     *                                           - INDEX_NAME: string
-     *
-     * @throws SchemaExtractionException If query fails
+     * @return array<int, array<string, mixed>>
+     * @throws SchemaExtractionException
      */
     public function getUniqueConstraints(string $table): array
     {
@@ -198,30 +132,20 @@ class SchemaExtractor
         }
 
         try {
-            $sql = "SELECT COLUMN_NAME, INDEX_NAME
-                    FROM information_schema.statistics
-                    WHERE TABLE_SCHEMA = DATABASE()
-                      AND TABLE_NAME = ?
-                      AND NON_UNIQUE = 0
-                      AND INDEX_NAME != 'PRIMARY'";
-            return $this->connection->fetchAllAssociative($sql, [$table]);
-        } catch (DBALException $e) {
-            throw new SchemaExtractionException(
-                sprintf('Failed to retrieve unique constraints for table "%s": %s', $table, $e->getMessage()),
-                0,
-                $e
+            return $this->connection->fetchAllAssociative(
+                "SELECT COLUMN_NAME, INDEX_NAME
+                 FROM information_schema.statistics
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND NON_UNIQUE = 0 AND INDEX_NAME != 'PRIMARY'",
+                [$table]
             );
+        } catch (DBALException $e) {
+            throw new SchemaExtractionException(sprintf('Failed to retrieve unique constraints for "%s": %s', $table, $e->getMessage()), 0, $e);
         }
     }
 
     /**
-     * Retrieves all non-primary indexes for a given table.
-     *
-     * @param string $table The table name
-     *
-     * @return array<string, array<string, mixed>> Indexed by column name: INDEX_NAME, NON_UNIQUE
-     *
-     * @throws SchemaExtractionException If query fails
+     * @return array<string, array<string, mixed>> Indexé par nom de colonne.
+     * @throws SchemaExtractionException
      */
     public function getIndexes(string $table): array
     {
@@ -230,15 +154,13 @@ class SchemaExtractor
         }
 
         try {
-            $sql = "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE
-                    FROM information_schema.statistics
-                    WHERE TABLE_SCHEMA = DATABASE()
-                      AND TABLE_NAME = ?
-                      AND INDEX_NAME != 'PRIMARY'
-                    ORDER BY SEQ_IN_INDEX";
-            $rows = $this->connection->fetchAllAssociative($sql, [$table]);
-
-            // Indexer par nom de colonne pour faciliter la recherche
+            $rows    = $this->connection->fetchAllAssociative(
+                "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE
+                 FROM information_schema.statistics
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME != 'PRIMARY'
+                 ORDER BY SEQ_IN_INDEX",
+                [$table]
+            );
             $indexes = [];
             foreach ($rows as $row) {
                 $indexes[$row['COLUMN_NAME']] = [
@@ -246,14 +168,9 @@ class SchemaExtractor
                     'NON_UNIQUE' => $row['NON_UNIQUE'],
                 ];
             }
-
             return $indexes;
         } catch (DBALException $e) {
-            throw new SchemaExtractionException(
-                sprintf('Failed to retrieve indexes for table "%s": %s', $table, $e->getMessage()),
-                0,
-                $e
-            );
+            throw new SchemaExtractionException(sprintf('Failed to retrieve indexes for "%s": %s', $table, $e->getMessage()), 0, $e);
         }
     }
 }

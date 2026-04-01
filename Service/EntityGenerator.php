@@ -80,13 +80,11 @@ PHP;
 
         $isAssociationTable = $this->isAssociationTable($primaryKeys, $foreignKeys);
 
-        // Créer un index des colonnes uniques
         $uniqueColumns = [];
         foreach ($uniqueConstraints as $constraint) {
             $uniqueColumns[] = $constraint['COLUMN_NAME'];
         }
 
-        // Construire le header avec repository
         $code = "<?php\n\nnamespace App\\Entity;\n\n";
         $code .= "use App\\Repository\\{$className}Repository;\n";
         $code .= "use Doctrine\\ORM\\Mapping as ORM;\n";
@@ -104,7 +102,7 @@ PHP;
         $constructorNeeded = false;
         $constructorCode = "";
 
-        // === STEP 1: Colonnes scalaires (non-FK) ===
+        // Colonnes scalaires
         foreach ($columns as $column) {
             $columnName = $column['COLUMN_NAME'];
             if (in_array(strtolower($columnName), $foreignCols, true)) {
@@ -122,37 +120,26 @@ PHP;
             $definedProperties[$propertyName] = true;
         }
 
-        // === STEP 2: Relations ManyToOne (FK) ===
-        // Détecter les FK multiples vers la même table pour générer des noms distincts
+        // Relations ManyToOne — regrouper les FK par table cible pour détecter les FK multiples
         $fkGroupedByTarget = [];
         foreach ($foreignKeys as $fk) {
             $targetTable = $fk['REFERENCED_TABLE_NAME'];
-            if (!isset($fkGroupedByTarget[$targetTable])) {
-                $fkGroupedByTarget[$targetTable] = [];
-            }
             $fkGroupedByTarget[$targetTable][] = $fk;
         }
 
-        // Stocker les inversedBy générés pour les réutiliser en STEP 3 côté inverse
         $generatedInversedBy = [];
 
         foreach ($foreignKeys as $fk) {
             $targetEntity = $this->snakeToCamel($fk['REFERENCED_TABLE_NAME'], true);
             $targetTable = $fk['REFERENCED_TABLE_NAME'];
-
-            // Si plusieurs FK pointent vers la même table, utiliser un nom sémantique basé sur la colonne
             $hasMultipleFKToSameTable = count($fkGroupedByTarget[$targetTable]) > 1;
 
             if ($hasMultipleFKToSameTable) {
-                // Extraire un nom sémantique de la colonne (ex: sender_id → sender, receiver_id → receiver)
-                $columnName = $fk['COLUMN_NAME'];
-                $propertyName = $this->extractSemanticName($columnName, $targetTable);
+                $propertyName = $this->extractSemanticName($fk['COLUMN_NAME'], $targetTable);
             } else {
-                // Nom standard basé sur l'entité au singulier
                 $propertyName = $this->cleanRelationPropertyName($fk['COLUMN_NAME'], $fk['REFERENCED_TABLE_NAME']);
             }
 
-            // Gérer les collisions de noms
             $originalPropertyName = $propertyName;
             $counter = 2;
             while (isset($definedProperties[$propertyName])) {
@@ -168,16 +155,12 @@ PHP;
                 $code .= "    #[ORM\\Id]\n";
             }
 
-            // inversedBy avec un nom basé sur la propriété si multiples FK vers même table
             if ($hasMultipleFKToSameTable) {
-                // Ex: $sender → inversedBy: 'sentMessages', $receiver → inversedBy: 'receivedMessages'
                 $inversedByName = $this->generateInversedByName($propertyName, lcfirst($className));
             } else {
-                // inversedBy standard avec le nom au pluriel de l'entité courante
                 $inversedByName = $this->pluralize(lcfirst($className));
             }
 
-            // Stocker pour STEP 3
             $generatedInversedBy[$targetTable][$fk['COLUMN_NAME']] = [
                 'inversedBy' => $inversedByName,
                 'mappedBy' => $propertyName,
@@ -190,15 +173,11 @@ PHP;
             $relationPropertyNames[$fk['COLUMN_NAME']] = $propertyName;
         }
 
-        // === STEP 3: Relations OneToMany (côté inverse) ===
+        // Relations OneToMany (côté inverse)
         $addedInverseRelations = [];
         $inverseGroupedBySource = [];
         foreach ($inverseRelations as $relation) {
-            $sourceTable = $relation['sourceTable'];
-            if (!isset($inverseGroupedBySource[$sourceTable])) {
-                $inverseGroupedBySource[$sourceTable] = [];
-            }
-            $inverseGroupedBySource[$sourceTable][] = $relation;
+            $inverseGroupedBySource[$relation['sourceTable']][] = $relation;
         }
 
         foreach ($inverseRelations as $relation) {
@@ -235,7 +214,7 @@ PHP;
             $constructorCode .= "        \$this->{$propertyName} = new ArrayCollection();\n";
         }
 
-        // === STEP 4: Relations ManyToMany ===
+        // Relations ManyToMany
         $manyToManyPropertyMap = [];
         foreach ($manyToManyRelations as $relation) {
             $targetEntity = $this->snakeToCamel($relation['targetEntity'], true);
@@ -264,14 +243,13 @@ PHP;
             ];
         }
 
-        // === STEP 5: Constructeur si nécessaire ===
         if ($constructorNeeded) {
             $code .= "    public function __construct()\n    {\n";
             $code .= $constructorCode;
             $code .= "    }\n\n";
         }
 
-        // === STEP 6: Getters/Setters pour colonnes scalaires ===
+        // Getters/Setters pour colonnes scalaires
         foreach ($columns as $column) {
             $columnName = $column['COLUMN_NAME'];
             if (in_array(strtolower($columnName), $foreignCols, true)) {
@@ -288,7 +266,7 @@ PHP;
             $generatedAccessors[$propertyName] = true;
         }
 
-        // === STEP 7: Getters/Setters pour ManyToOne ===
+        // Getters/Setters pour ManyToOne
         foreach ($foreignKeys as $fk) {
             $targetEntity = $this->snakeToCamel($fk['REFERENCED_TABLE_NAME'], true);
             $propertyName = $relationPropertyNames[$fk['COLUMN_NAME']] ?? $this->cleanRelationPropertyName($fk['COLUMN_NAME'], $fk['REFERENCED_TABLE_NAME']);
@@ -303,56 +281,37 @@ PHP;
             $generatedAccessors[$propertyName] = true;
         }
 
-        // === STEP 8: Méthodes pour OneToMany ===
+        // Méthodes de collection pour OneToMany
         $processedOneToManyMethods = [];
-
-        // Grouper à nouveau pour correspondre à STEP 3
         $inverseGroupedBySource = [];
         foreach ($inverseRelations as $relation) {
-            $sourceTable = $relation['sourceTable'];
-            if (!isset($inverseGroupedBySource[$sourceTable])) {
-                $inverseGroupedBySource[$sourceTable] = [];
-            }
-            $inverseGroupedBySource[$sourceTable][] = $relation;
+            $inverseGroupedBySource[$relation['sourceTable']][] = $relation;
         }
 
         foreach ($inverseRelations as $relation) {
             $targetEntity = $this->snakeToCamel($relation['sourceTable'], true);
             $sourceTable = $relation['sourceTable'];
             $columnName = $relation['columnName'];
-
-            // Vérifier s'il y a plusieurs FK de la table source vers cette table
             $hasMultipleFKFromSource = count($inverseGroupedBySource[$sourceTable]) > 1;
 
-            // Déterminer le mappedBy
-            if ($hasMultipleFKFromSource) {
-                $mappedByProperty = $this->extractSemanticName($columnName, $tableName);
-            } else {
-                $mappedByProperty = $this->cleanRelationPropertyName($columnName, $tableName);
-            }
+            $mappedByProperty = $hasMultipleFKFromSource
+                ? $this->extractSemanticName($columnName, $tableName)
+                : $this->cleanRelationPropertyName($columnName, $tableName);
 
-            // Créer la même clé unique que dans STEP 3
             $relationKey = $targetEntity . '::' . $mappedByProperty;
-
-            // Éviter les doublons
             if (isset($processedOneToManyMethods[$relationKey])) {
                 continue;
             }
             $processedOneToManyMethods[$relationKey] = true;
 
-            // Retrouver le nom réel de la propriété définie en STEP 3
-            if ($hasMultipleFKFromSource) {
-                $realPropertyName = $this->generateInversedByName($mappedByProperty, lcfirst($targetEntity));
-            } else {
-                $realPropertyName = $this->pluralize(lcfirst($targetEntity));
-            }
+            $realPropertyName = $hasMultipleFKFromSource
+                ? $this->generateInversedByName($mappedByProperty, lcfirst($targetEntity))
+                : $this->pluralize(lcfirst($targetEntity));
 
-            // Vérifier que la collection existe
             if (!isset($definedProperties[$realPropertyName])) {
                 continue;
             }
 
-            // Nom de la méthode basé sur le nom de la collection pour éviter les doublons
             $singularCollectionName = $this->singularize($realPropertyName);
             $methodBase = ucfirst($singularCollectionName);
             $collectionMethodName = ucfirst($realPropertyName);
@@ -362,7 +321,6 @@ PHP;
             $code .= "    public function get{$collectionMethodName}(): Collection\n    {\n        return \$this->{$realPropertyName};\n    }\n\n";
 
             $singularCollectionVar = '$' . $singularCollectionName;
-
             $code .= "    public function add{$methodBase}({$targetEntity} {$singularCollectionVar}): static\n    {\n";
             $code .= "        if (!\$this->{$realPropertyName}->contains({$singularCollectionVar})) {\n";
             $code .= "            \$this->{$realPropertyName}->add({$singularCollectionVar});\n";
@@ -379,7 +337,7 @@ PHP;
             $code .= "        return \$this;\n    }\n\n";
         }
 
-        // === STEP 9: Méthodes pour ManyToMany ===
+        // Méthodes de collection pour ManyToMany
         foreach ($manyToManyPropertyMap as $entry) {
             $relation = $entry['relation'];
             $targetEntity = $entry['targetEntity'];
@@ -419,103 +377,81 @@ PHP;
     }
 
     /**
-     * Extrait un nom sémantique d'une colonne FK
-     * Ex: sender_id → sender, author_id → author, receiver_id → receiver
+     * Extrait un nom sémantique depuis une colonne FK.
+     * Ex: sender_id → sender, author_id → author
      */
     private function extractSemanticName(string $columnName, string $targetTable): string
     {
-        // Convertir en camelCase
         $camelName = $this->snakeToCamel($columnName);
 
-        // Enlever le préfixe "id" si présent
         if (str_starts_with($camelName, 'id')) {
             $camelName = lcfirst(substr($camelName, 2));
         }
 
-        // Si le nom se termine par "Id", l'enlever
         if (str_ends_with($camelName, 'Id')) {
             $camelName = substr($camelName, 0, -2);
         }
 
-        // Si on a quelque chose de valide, le retourner
         if (!empty($camelName)) {
             return $camelName;
         }
 
-        // Sinon, utiliser le nom de la table cible au singulier
         return lcfirst($this->singularize($this->snakeToCamel($targetTable)));
     }
 
     /**
-     * Génère un inversedBy adapté pour les relations multiples
-     * Ex: sender → sentMessages, receiver → receivedMessages, author → authoredPosts
+     * Génère un nom inversedBy pour les FK multiples vers une même table.
+     * Ex: sender → sentMessages, receiver → receivedMessages
      */
     private function generateInversedByName(string $propertyName, string $entityName): string
     {
-        // Règles de transformation
         $transforms = [
-            'sender' => 'sent',
+            'sender'   => 'sent',
             'receiver' => 'received',
-            'author' => 'authored',
-            'creator' => 'created',
-            'owner' => 'owned',
-            'parent' => 'child',
+            'author'   => 'authored',
+            'creator'  => 'created',
+            'owner'    => 'owned',
+            'parent'   => 'child',
         ];
 
-        $lowerProperty = strtolower($propertyName);
-
-        // Chercher une transformation connue
         foreach ($transforms as $key => $prefix) {
-            if (str_contains($lowerProperty, $key)) {
+            if (str_contains(strtolower($propertyName), $key)) {
                 return $prefix . ucfirst($this->pluralize($entityName));
             }
         }
 
-        // Par défaut : propertyName + entityNamePlural
-        // Ex: user → userMessages, friend → friendMessages
         return $propertyName . ucfirst($this->pluralize($entityName));
     }
 
     /**
-     * Nettoie le nom de propriété pour les relations en enlevant les préfixes "id"
-     * et en mettant au singulier (convention Doctrine pour ManyToOne)
+     * Normalise le nom d'une propriété de relation en supprimant les préfixes "id".
      */
     private function cleanRelationPropertyName(string $columnName, string $referencedTable): string
     {
         $propertyName = $this->snakeToCamel($columnName);
         $referencedEntityName = $this->snakeToCamel($referencedTable);
 
-        // Si la propriété commence par "id", on l'enlève
         if (str_starts_with($propertyName, 'id')) {
             $withoutId = substr($propertyName, 2);
-            // Vérifier si ce qui reste correspond à l'entité référencée
             if (strcasecmp($withoutId, $referencedEntityName) === 0) {
                 return lcfirst($withoutId);
             }
         }
 
-        // Sinon, utiliser le nom de l'entité référencée au SINGULIER
         return lcfirst($this->singularize($referencedEntityName));
     }
 
-    /**
-     * Convertit un nom au singulier (simple heuristique)
-     */
     private function singularize(string $word): string
     {
-        // Cas spéciaux
         $irregulars = [
-            'People' => 'Person',
-            'people' => 'person',
-            'Children' => 'Child',
-            'children' => 'child',
+            'People' => 'Person', 'people' => 'person',
+            'Children' => 'Child', 'children' => 'child',
         ];
 
         if (isset($irregulars[$word])) {
             return $irregulars[$word];
         }
 
-        // Règle simple: enlever le 's' final si présent
         if (str_ends_with($word, 's') && strlen($word) > 1) {
             return substr($word, 0, -1);
         }
@@ -523,29 +459,21 @@ PHP;
         return $word;
     }
 
-    /**
-     * Convertit un nom au pluriel (heuristique simple)
-     */
     private function pluralize(string $word): string
     {
-        // Cas spéciaux
         $irregulars = [
-            'person' => 'people',
-            'Person' => 'People',
-            'child' => 'children',
-            'Child' => 'Children',
+            'person' => 'people', 'Person' => 'People',
+            'child' => 'children', 'Child' => 'Children',
         ];
 
         if (isset($irregulars[$word])) {
             return $irregulars[$word];
         }
 
-        // Ne pas ajouter de 's' si déjà au pluriel
         if (str_ends_with($word, 's')) {
             return $word;
         }
 
-        // Règles simples de pluralisation
         if (str_ends_with($word, 'y') && !in_array(substr($word, -2, 1), ['a', 'e', 'i', 'o', 'u'])) {
             return substr($word, 0, -1) . 'ies';
         }
@@ -558,21 +486,11 @@ PHP;
         return $word . 's';
     }
 
-
-    /**
-     * Trouve le nom de la propriété inverse pour mappedBy/inversedBy
-     */
     private function findInverseSide(string $currentTable, array $foreignKey, array $inverseRelations): ?string
     {
-        // Le currentTable est la table qui CONTIENT la FK
-        // On cherche dans inverseRelations les relations où la table REFERENCEE = REFERENCED_TABLE_NAME
-        // et où la colonne FK = COLUMN_NAME
-
         foreach ($inverseRelations as $relation) {
-            // Si cette relation inverse pointe vers notre table actuelle avec cette FK
             if ($relation['sourceTable'] === $currentTable &&
                 $relation['columnName'] === $foreignKey['COLUMN_NAME']) {
-                // Le nom de la collection dans l'entité référencée
                 $targetEntity = $this->snakeToCamel($currentTable, true);
                 return lcfirst($targetEntity) . 's';
             }
@@ -580,12 +498,8 @@ PHP;
         return null;
     }
 
-    /**
-     * Trouve la clé primaire d'une table (simplifié pour les JoinColumn)
-     */
     private function findPrimaryKey(string $tableName): string
     {
-        // Par défaut, on suppose id + nom de table
         return 'id' . $this->snakeToCamel($tableName, true);
     }
 
@@ -593,7 +507,6 @@ PHP;
     {
         $phpType = $this->mapDoctrineTypeToPhp($column['DATA_TYPE']);
         $nullable = $column['IS_NULLABLE'] === 'YES';
-
         $attributes = [];
 
         if ($isPrimaryKey) {
@@ -601,14 +514,12 @@ PHP;
             if (in_array($column['DATA_TYPE'], ['int', 'bigint', 'smallint'])) {
                 $attributes[] = "    #[ORM\GeneratedValue]";
             }
-            // Les IDs auto-générés sont toujours nullable avant persist
             $nullable = true;
         }
 
         $ormType = $this->mapToORMType($column['DATA_TYPE'], $column['COLUMN_TYPE']);
-
-        // Ajouter le nom de la colonne explicitement
         $columnAttr = "    #[ORM\Column(name: \"{$column['COLUMN_NAME']}\", type: $ormType";
+
         if ($this->columnSupportsLength($column['DATA_TYPE'])) {
             $length = $this->resolveStringLength($column);
             if ($length !== null) {
@@ -619,17 +530,10 @@ PHP;
         if ($this->isDecimalColumn($column)) {
             $precision = $this->resolveNumericPrecision($column);
             $scale = $this->resolveNumericScale($column);
-
-            if ($precision !== null) {
-                $columnAttr .= ", precision: $precision";
-            }
-
-            if ($scale !== null) {
-                $columnAttr .= ", scale: $scale";
-            }
+            if ($precision !== null) { $columnAttr .= ", precision: $precision"; }
+            if ($scale !== null) { $columnAttr .= ", scale: $scale"; }
         }
 
-        // Ajouter unique: true si la colonne a une contrainte UNIQUE
         if ($isUnique && !$isPrimaryKey) {
             $columnAttr .= ", unique: true";
         }
@@ -639,19 +543,12 @@ PHP;
         }
 
         $columnAttr .= ")]";
-
         $attributes[] = $columnAttr;
 
         $propertyName = $this->snakeToCamel($column['COLUMN_NAME']);
-
         $code  = implode("\n", $attributes) . "\n";
         $code .= "    private " . ($nullable ? '?' : '') . "$phpType \$$propertyName";
-
-        // Initialiser les types nullables
-        if ($nullable) {
-            $code .= " = null";
-        }
-
+        if ($nullable) { $code .= " = null"; }
         $code .= ";\n\n";
 
         return $code;
@@ -664,18 +561,15 @@ PHP;
         $propertyName = $this->snakeToCamel($column['COLUMN_NAME']);
         $methodName = ucfirst($propertyName);
 
-        // Les IDs auto-générés sont toujours nullable avant persist
         if ($isPrimaryKey) {
             $nullable = true;
         }
 
         $nullableType = $nullable ? '?' : '';
-
-        // Getter
         $code  = "    public function get$methodName(): {$nullableType}$phpType\n    {\n";
         $code .= "        return \$this->$propertyName;\n    }\n\n";
 
-        // Setter : NE PAS générer pour les clés primaires auto-générées
+        // Pas de setter pour les PK auto-générées
         if (!$isPrimaryKey) {
             $code .= "    public function set$methodName({$nullableType}$phpType \$$propertyName): self\n    {\n";
             $code .= "        \$this->$propertyName = \$$propertyName;\n\n";
@@ -696,75 +590,41 @@ PHP;
 
     private function mapDoctrineTypeToPhp(string $doctrineType): string
     {
-        $type = strtolower($doctrineType);
-
-        return match ($type) {
-            // Numériques entiers
-            'int', 'integer', 'bigint', 'smallint', 'mediumint' => 'int',
-
-            // Booléens
-            'bool', 'boolean', 'tinyint' => 'bool',
-
-            // Chaînes de caractères / textes
+        return match (strtolower($doctrineType)) {
+            'int', 'integer', 'bigint', 'smallint', 'mediumint'                          => 'int',
+            'bool', 'boolean', 'tinyint'                                                  => 'bool',
             'varchar', 'char', 'string', 'text', 'longtext', 'mediumtext', 'enum', 'set' => 'string',
-
-            // Dates & temps
-            'datetime', 'datetimetz', 'timestamp' => '\\DateTimeInterface',
-            'datetime_immutable', 'datetimetz_immutable' => '\\DateTimeImmutable',
-            'date', 'date_immutable' => '\\DateTimeInterface',
-            'time', 'time_immutable' => '\\DateTimeInterface',
-
-            // Numériques à virgule
-            'float', 'double', 'real' => 'float',
-            // Pour decimal/numeric, on peut préférer string pour éviter les pertes de précision
-            'decimal', 'numeric' => 'string',
-
-            // JSON → tableau typé plutôt que mixed
-            'json' => 'array',
-
-            // Fallback : on ne renvoie plus mixed, on reste sur string qui est plus sûr
-            default => 'string',
+            'datetime', 'datetimetz', 'timestamp', 'date', 'time'                         => '\\DateTimeInterface',
+            'datetime_immutable', 'datetimetz_immutable'                                  => '\\DateTimeImmutable',
+            'date_immutable', 'time_immutable'                                            => '\\DateTimeInterface',
+            'float', 'double', 'real'                                                     => 'float',
+            'decimal', 'numeric'                                                          => 'string',
+            'json'                                                                        => 'array',
+            default                                                                       => 'string',
         };
     }
 
     private function mapToORMType(string $dataType, string $columnType): string
     {
-        $dataType = strtolower($dataType);
-
-        return match ($dataType) {
-            // Numériques entiers
-            'int', 'integer', 'smallint' => 'Types::INTEGER',
-            'bigint' => 'Types::BIGINT',
-            'mediumint' => 'Types::INTEGER', // mappé sur INTEGER côté Doctrine
-
-            // Chaînes
-            'varchar', 'char', 'string' => 'Types::STRING',
-            'text', 'longtext', 'mediumtext' => 'Types::TEXT',
-            'enum', 'set' => 'Types::STRING',
-
-            // Dates & temps
-            'datetime' => 'Types::DATETIME_MUTABLE',
-            'datetimetz' => 'Types::DATETIMETZ_MUTABLE',
-            'datetime_immutable' => 'Types::DATETIME_IMMUTABLE',
-            'datetimetz_immutable' => 'Types::DATETIMETZ_IMMUTABLE',
-            'timestamp' => 'Types::DATETIME_MUTABLE',
-            'date' => 'Types::DATE_MUTABLE',
-            'date_immutable' => 'Types::DATE_IMMUTABLE',
-            'time' => 'Types::TIME_MUTABLE',
-            'time_immutable' => 'Types::TIME_IMMUTABLE',
-
-            // Numériques
-            'float', 'double', 'real' => 'Types::FLOAT',
-            'decimal', 'numeric' => 'Types::DECIMAL',
-
-            // Booléens
-            'bool', 'boolean', 'tinyint' => 'Types::BOOLEAN',
-
-            // JSON
-            'json' => 'Types::JSON',
-
-            // Fallback
-            default => 'Types::STRING',
+        return match (strtolower($dataType)) {
+            'int', 'integer', 'smallint', 'mediumint' => 'Types::INTEGER',
+            'bigint'                                  => 'Types::BIGINT',
+            'varchar', 'char', 'string'               => 'Types::STRING',
+            'text', 'longtext', 'mediumtext'          => 'Types::TEXT',
+            'enum', 'set'                             => 'Types::STRING',
+            'datetime', 'timestamp'                   => 'Types::DATETIME_MUTABLE',
+            'datetimetz'                              => 'Types::DATETIMETZ_MUTABLE',
+            'datetime_immutable'                      => 'Types::DATETIME_IMMUTABLE',
+            'datetimetz_immutable'                    => 'Types::DATETIMETZ_IMMUTABLE',
+            'date'                                    => 'Types::DATE_MUTABLE',
+            'date_immutable'                          => 'Types::DATE_IMMUTABLE',
+            'time'                                    => 'Types::TIME_MUTABLE',
+            'time_immutable'                          => 'Types::TIME_IMMUTABLE',
+            'float', 'double', 'real'                 => 'Types::FLOAT',
+            'decimal', 'numeric'                      => 'Types::DECIMAL',
+            'bool', 'boolean', 'tinyint'              => 'Types::BOOLEAN',
+            'json'                                    => 'Types::JSON',
+            default                                   => 'Types::STRING',
         };
     }
 
@@ -774,36 +634,27 @@ PHP;
     }
 
     /**
-     * Détecte automatiquement la clé primaire si elle n'est pas définie dans la base
-     * Cherche une colonne nommée "id" + nom de la table (ex: idProprietaire pour Proprietaire)
-     * ou simplement "id"
+     * Détecte la clé primaire à partir des conventions de nommage courantes.
      */
     public function detectPrimaryKey(string $tableName, array $columns): array
     {
-        // Liste des patterns possibles pour les clés primaires
         $patterns = [
-            'id' . $tableName,
-            'id' . ucfirst($tableName),
-            'id' . strtolower($tableName),
-            'id' . lcfirst($tableName),
-            'id_' . strtolower($tableName),
-            'id',
-            $tableName . 'Id',
-            $tableName . '_id',
+            'id' . $tableName, 'id' . ucfirst($tableName),
+            'id' . strtolower($tableName), 'id' . lcfirst($tableName),
+            'id_' . strtolower($tableName), 'id',
+            $tableName . 'Id', $tableName . '_id',
             strtolower($tableName) . '_id',
         ];
 
         foreach ($columns as $column) {
             $columnName = $column['COLUMN_NAME'];
 
-            // Vérifier si le nom de colonne correspond à un pattern
             if (in_array($columnName, $patterns, true)) {
                 return [$columnName];
             }
 
-            // Vérifier si la colonne contient "id" et le nom de la table (insensible à la casse)
             $lowerColumn = strtolower($columnName);
-            $lowerTable = strtolower($tableName);
+            $lowerTable  = strtolower($tableName);
             if (str_contains($lowerColumn, 'id') && str_contains($lowerColumn, $lowerTable)) {
                 return [$columnName];
             }
@@ -815,7 +666,6 @@ PHP;
     private function columnSupportsLength(string $dataType): bool
     {
         $type = strtolower($dataType);
-
         return str_contains($type, 'char') || $type === 'string' || $type === 'binary' || $type === 'varbinary';
     }
 
@@ -834,9 +684,7 @@ PHP;
 
     private function isDecimalColumn(array $column): bool
     {
-        $type = strtolower($column['DATA_TYPE']);
-
-        return in_array($type, ['decimal', 'numeric'], true);
+        return in_array(strtolower($column['DATA_TYPE']), ['decimal', 'numeric'], true);
     }
 
     private function resolveNumericPrecision(array $column): ?int
@@ -844,9 +692,7 @@ PHP;
         if (isset($column['NUMERIC_PRECISION']) && $column['NUMERIC_PRECISION'] !== null) {
             return (int) $column['NUMERIC_PRECISION'];
         }
-
         [$precision] = $this->parseNumericMetaFromColumnType($column);
-
         return $precision;
     }
 
@@ -855,9 +701,7 @@ PHP;
         if (isset($column['NUMERIC_SCALE']) && $column['NUMERIC_SCALE'] !== null) {
             return (int) $column['NUMERIC_SCALE'];
         }
-
         [, $scale] = $this->parseNumericMetaFromColumnType($column);
-
         return $scale;
     }
 
@@ -868,10 +712,10 @@ PHP;
         }
 
         if (preg_match('/\((\d+)(?:,(\d+))?\)/', $column['COLUMN_TYPE'], $matches)) {
-            $precision = isset($matches[1]) ? (int) $matches[1] : null;
-            $scale = isset($matches[2]) ? (int) $matches[2] : null;
-
-            return [$precision, $scale];
+            return [
+                isset($matches[1]) ? (int) $matches[1] : null,
+                isset($matches[2]) ? (int) $matches[2] : null,
+            ];
         }
 
         return [null, null];
@@ -884,13 +728,11 @@ PHP;
                 return $column;
             }
         }
-
         return null;
     }
 
     /**
-     * Vérifie si une table est une table d'association
-     * (toutes les clés primaires sont des clés étrangères)
+     * Retourne vrai si toutes les clés primaires sont aussi des clés étrangères (table d'association).
      */
     private function isAssociationTable(array $primaryKeys, array $foreignKeys): bool
     {
@@ -911,33 +753,27 @@ PHP;
 
     public function isCompositePrimaryKey(array $primaryKeys): bool
     {
-        return false; // Désactiver l'utilisation d'Embeddable
+        return false;
     }
 
     public function generateEmbeddableCode(string $tableName, array $columns, array $primaryKeys): string
     {
         $className = $this->snakeToCamel($tableName, true) . 'Id';
-
         $code = "<?php\n\nnamespace App\\Entity;\n\nuse Doctrine\\ORM\\Mapping as ORM;\nuse Doctrine\\DBAL\\Types\\Types;\n\n#[ORM\\Embeddable]\nclass $className\n{\n";
 
         foreach ($primaryKeys as $pk) {
             $columnDefinition = $this->getColumnDefinition($columns, $pk);
-            if (!$columnDefinition) {
-                continue;
-            }
+            if (!$columnDefinition) { continue; }
             $code .= $this->generateEmbeddablePropertyCode($columnDefinition);
         }
 
         foreach ($primaryKeys as $pk) {
             $columnDefinition = $this->getColumnDefinition($columns, $pk);
-            if (!$columnDefinition) {
-                continue;
-            }
+            if (!$columnDefinition) { continue; }
             $code .= $this->generateEmbeddableGetterSetterCode($columnDefinition);
         }
 
         $code .= "}\n";
-
         return $code;
     }
 
@@ -952,32 +788,21 @@ PHP;
 
         if ($this->columnSupportsLength($column['DATA_TYPE'])) {
             $length = $this->resolveStringLength($column);
-            if ($length !== null) {
-                $columnAttr .= ", length: $length";
-            }
+            if ($length !== null) { $columnAttr .= ", length: $length"; }
         }
 
         if ($this->isDecimalColumn($column)) {
             $precision = $this->resolveNumericPrecision($column);
             $scale = $this->resolveNumericScale($column);
-
-            if ($precision !== null) {
-                $columnAttr .= ", precision: $precision";
-            }
-            if ($scale !== null) {
-                $columnAttr .= ", scale: $scale";
-            }
+            if ($precision !== null) { $columnAttr .= ", precision: $precision"; }
+            if ($scale !== null) { $columnAttr .= ", scale: $scale"; }
         }
 
-        if ($nullable) {
-            $columnAttr .= ", nullable: true";
-        }
-
+        if ($nullable) { $columnAttr .= ", nullable: true"; }
         $columnAttr .= ")]";
 
         $code  = "$columnAttr\n";
         $code .= "    private " . ($nullable ? '?' : '') . "$phpType \$$propertyName;\n\n";
-
         return $code;
     }
 

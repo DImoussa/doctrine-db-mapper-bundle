@@ -264,9 +264,8 @@ class GenerateEntitiesCommand extends Command
     }
 
     /**
-     * Exécute les instructions SQL avec gestion spéciale pour DROP PRIMARY KEY.
-     * MySQL bloque cette opération (erreur 1553) si des FK d'autres tables référencent la PK.
-     * Solution : drop FK dépendantes → modifier PK → recréer FK.
+     * Exécute les instructions SQL avec gestion des ALTER TABLE DROP PRIMARY KEY.
+     * MySQL bloque cette opération (erreur 1553) si des FK référencent la PK.
      *
      * @param array<int, string> $sqlStatements
      */
@@ -282,13 +281,8 @@ class GenerateEntitiesCommand extends Command
     }
 
     /**
-     * Modifie une PRIMARY KEY en gérant les contraintes FK qui bloquent l'opération.
-     *
-     * MySQL erreur 1553 : "Cannot drop index 'PRIMARY': needed in a foreign key constraint"
-     * → causé par les FK **définies SUR cette table** qui utilisent la PK comme index support.
-     * → causé aussi par les FK d'autres tables qui référencent cette table.
-     *
-     * Solution : drop toutes les FK impactées → modifier PK → recréer les FK.
+     * Modifie une PRIMARY KEY en gérant les FK dépendantes (erreur MySQL 1553).
+     * Stratégie : drop FK → modifier PK → recréer FK.
      */
     private function executeAlterPkSafely(Connection $connection, string $tableName, string $alterSql): void
     {
@@ -424,7 +418,6 @@ class GenerateEntitiesCommand extends Command
 
     /**
      * Parse les instructions SQL depuis la sortie de "doctrine:schema:update --dump-sql".
-     * Gère les instructions mono-ligne et multi-lignes (ex: CREATE TABLE).
      *
      * @return array<int, string>
      */
