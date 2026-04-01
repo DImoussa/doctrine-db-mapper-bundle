@@ -51,24 +51,21 @@ class EntityMerger
         $newMethodNames    = $this->getMethodNames($newClass);
         $newPropertyNames  = $this->getPropertyNames($newClass);
 
-        // Méthodes présentes dans l'ancien fichier mais pas dans le nouveau = méthodes custom
-        $customMethods = $this->extractCustomMethods($existingClass, $newMethodNames);
+        $customMethods    = $this->extractCustomMethods($existingClass, $newMethodNames);
+        $customProperties = $this->extractCustomProperties($existingClass, $newPropertyNames, $newClass);
 
-        // Propriétés non-ORM présentes dans l'ancien fichier mais pas dans le nouveau
-        $customProperties = $this->extractCustomProperties($existingClass, $newPropertyNames);
-
-        // Fusionner interfaces, traits, use statements
         $this->mergeInterfaces($existingClass, $newClass);
         $this->mergeTraits($existingClass, $newClass);
         $this->mergeUseStatements($existingAst, $newAst);
 
-        // Injecter les propriétés custom avant les méthodes
         if (!empty($customProperties)) {
+            $preservedPropNames = array_map(
+                fn($p) => (string) $p->props[0]->name,
+                $customProperties
+            );
+            $this->mergeConstructorInits($existingClass, $newClass, $preservedPropNames);
             $this->injectPropertiesBeforeMethods($newClass, $customProperties);
         }
-
-        // Injecter les méthodes custom à la fin de la classe
-        foreach ($customMethods as $method) {
             $newClass->stmts[] = $method;
         }
 
@@ -117,28 +114,87 @@ class EntityMerger
     }
 
     /**
-     * Extrait les propriétés non-ORM présentes dans $existing mais absentes du nouveau.
+     * Extrait les propriétés non-ORM présentes dans $existing mais absentes du nouveau code.
+     * Les propriétés portant un attribut ORM sont exclues : leur génération est entièrement
+     * pilotée par le schéma de la base de données.
      *
      * @return array<Stmt\Property>
      */
-    private function extractCustomProperties(Stmt\Class_ $existing, array $newPropertyNames): array
+    private function extractCustomProperties(Stmt\Class_ $existing, array $newPropertyNames, Stmt\Class_ $newClass): array
     {
         $custom = [];
+
         foreach ($existing->stmts as $stmt) {
             if (!($stmt instanceof Stmt\Property)) {
                 continue;
             }
             foreach ($stmt->props as $prop) {
                 if (!in_array((string) $prop->name, $newPropertyNames, true)) {
-                    // Vérifier que ce n'est pas une propriété ORM (pas d'attribut #[ORM\...])
-                    if (!$this->hasOrmAttribute($stmt)) {
-                        $custom[] = $stmt;
+                    if ($this->hasOrmAttribute($stmt)) {
                         break;
                     }
+                    $custom[] = $stmt;
+                    break;
                 }
             }
         }
+
         return $custom;
+    }
+
+    /**
+     * Propage dans le constructeur du nouveau code les initialisations de collections
+     * (ArrayCollection) correspondant aux propriétés préservées depuis l'ancien code.
+     *
+     * @param array<string> $preservedPropertyNames
+     */
+    private function mergeConstructorInits(Stmt\Class_ $existing, Stmt\Class_ $new, array $preservedPropertyNames): void
+    {
+        $oldInits = [];
+        foreach ($existing->getMethods() as $method) {
+            if ((string) $method->name !== '__construct') {
+                continue;
+            }
+            foreach ($method->stmts ?? [] as $stmt) {
+                if ($stmt instanceof Node\Stmt\Expression
+                    && $stmt->expr instanceof Node\Expr\Assign
+                    && $stmt->expr->var instanceof Node\Expr\PropertyFetch
+                    && $stmt->expr->var->var instanceof Node\Expr\Variable
+                    && (string) $stmt->expr->var->var->name === 'this'
+                ) {
+                    $propName = (string) $stmt->expr->var->name;
+                    if (in_array($propName, $preservedPropertyNames, true)) {
+                        $oldInits[$propName] = $stmt;
+                    }
+                }
+            }
+            break;
+        }
+
+        if (empty($oldInits)) {
+            return;
+        }
+
+        foreach ($new->getMethods() as $method) {
+            if ((string) $method->name !== '__construct') {
+                continue;
+            }
+            $existingInitProps = [];
+            foreach ($method->stmts ?? [] as $stmt) {
+                if ($stmt instanceof Node\Stmt\Expression
+                    && $stmt->expr instanceof Node\Expr\Assign
+                    && $stmt->expr->var instanceof Node\Expr\PropertyFetch
+                ) {
+                    $existingInitProps[] = (string) $stmt->expr->var->name;
+                }
+            }
+            foreach ($oldInits as $propName => $init) {
+                if (!in_array($propName, $existingInitProps, true)) {
+                    $method->stmts[] = $init;
+                }
+            }
+            return;
+        }
     }
 
     /**

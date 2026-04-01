@@ -246,6 +246,65 @@ class RelationshipAnalyzer
         return $word . 's';
     }
 
+    /**
+     * Rétrograde une table de jonction ManyToMany en entité standard.
+     * Supprime les relations ManyToMany des entités parentes et reconstruit
+     * les relations OneToMany correspondantes afin d'éviter le double mapping.
+     */
+    public function demoteManyToManyTable(string $tableName): void
+    {
+        if (!isset($this->manyToManyTables[$tableName])) {
+            return;
+        }
+
+        $foreignKeys = $this->manyToManyTables[$tableName];
+
+        unset($this->manyToManyTables[$tableName]);
+
+        foreach ($foreignKeys as $fk) {
+            $referencedTable = $fk['REFERENCED_TABLE_NAME'] ?? null;
+            if ($referencedTable && isset($this->manyToManyRelationsPerTable[$referencedTable])) {
+                $this->manyToManyRelationsPerTable[$referencedTable] = array_values(array_filter(
+                    $this->manyToManyRelationsPerTable[$referencedTable],
+                    fn($rel) => $rel['joinTable'] !== $tableName
+                ));
+            }
+        }
+
+        foreach ($foreignKeys as $fk) {
+            $referencedTable = $fk['REFERENCED_TABLE_NAME'] ?? null;
+            if (!$referencedTable) {
+                continue;
+            }
+
+            if (!isset($this->tableRelations[$referencedTable])) {
+                $this->tableRelations[$referencedTable] = [];
+            }
+
+            $uniqueKey = $tableName . '::' . $fk['COLUMN_NAME'] . '->' . $referencedTable;
+            $found     = false;
+
+            foreach ($this->tableRelations[$referencedTable] as &$existingRel) {
+                if ($existingRel['sourceTable'] . '::' . $existingRel['columnName'] . '->' . $referencedTable === $uniqueKey) {
+                    $existingRel['isManyToMany'] = false;
+                    $found = true;
+                    break;
+                }
+            }
+            unset($existingRel);
+
+            if (!$found) {
+                $this->tableRelations[$referencedTable][] = [
+                    'sourceTable'      => $tableName,
+                    'columnName'       => $fk['COLUMN_NAME'],
+                    'referencedColumn' => $fk['REFERENCED_COLUMN_NAME'],
+                    'isManyToMany'     => false,
+                    'foreignKey'       => $fk,
+                ];
+            }
+        }
+    }
+
     private function buildPairKey(string $tableA, string $tableB): string
     {
         $pair = [strtolower($tableA), strtolower($tableB)];

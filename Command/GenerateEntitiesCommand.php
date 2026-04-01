@@ -130,6 +130,18 @@ class GenerateEntitiesCommand extends Command
             $output->writeln('<comment>  → Tables d\'association ManyToMany détectées: ' . implode(', ', $manyToManyTables) . '</comment>');
         }
 
+        
+        foreach ($this->relationshipAnalyzer->getAllManyToManyTables() as $m2mTable) {
+            $m2mClassName  = $this->entityGenerator->snakeToCamel($m2mTable, true);
+            $m2mEntityPath = $normalizedOutputDir . DIRECTORY_SEPARATOR . $m2mClassName . '.php';
+            if (file_exists($m2mEntityPath)) {
+                $this->relationshipAnalyzer->demoteManyToManyTable($m2mTable);
+                $output->writeln(
+                    "<comment>  ↩️  '$m2mTable' : entité existante détectée, table reclassifiée en entité standard (OneToMany/ManyToOne).</comment>"
+                );
+            }
+        }
+
         // === PHASE 3: Générer les entités ===
         $output->writeln('<info>⚙️  Génération des entités et repositories...</info>');
 
@@ -281,16 +293,40 @@ class GenerateEntitiesCommand extends Command
     /**
      * Exécute les instructions SQL avec gestion des ALTER TABLE DROP PRIMARY KEY.
      * MySQL bloque cette opération (erreur 1553) si des FK référencent la PK.
+     * Le mode SQL de la session est assoupli le temps de l'exécution afin d'autoriser
+     * les valeurs de date nulles ('0000-00-00') présentes dans les données existantes.
      *
      * @param array<int, string> $sqlStatements
      */
     private function executeSchemaStatements(Connection $connection, array $sqlStatements): void
     {
-        foreach ($sqlStatements as $sql) {
-            if (preg_match('/ALTER\s+TABLE\s+`?(\w+)`?.*DROP\s+PRIMARY\s+KEY/i', $sql, $matches)) {
-                $this->executeAlterPkSafely($connection, $matches[1], $sql);
-            } else {
-                $connection->executeStatement($sql);
+        $originalMode = null;
+        try {
+            $originalMode = $connection->fetchOne('SELECT @@SESSION.sql_mode');
+            $relaxedMode  = implode(',', array_filter(
+                explode(',', (string) $originalMode),
+                fn(string $flag) => !in_array(trim($flag), ['NO_ZERO_DATE', 'NO_ZERO_IN_DATE', 'STRICT_TRANS_TABLES', 'STRICT_ALL_TABLES'], true)
+            ));
+            $connection->executeStatement("SET SESSION sql_mode = :mode", ['mode' => $relaxedMode]);
+        } catch (\Throwable) {
+            $originalMode = null;
+        }
+
+        try {
+            foreach ($sqlStatements as $sql) {
+                if (preg_match('/ALTER\s+TABLE\s+`?(\w+)`?.*DROP\s+PRIMARY\s+KEY/i', $sql, $matches)) {
+                    $this->executeAlterPkSafely($connection, $matches[1], $sql);
+                } else {
+                    $connection->executeStatement($sql);
+                }
+            }
+        } finally {
+            if ($originalMode !== null) {
+                try {
+                    $connection->executeStatement("SET SESSION sql_mode = :mode", ['mode' => $originalMode]);
+                } catch (\Throwable) {
+                    // Restauration non critique.
+                }
             }
         }
     }
