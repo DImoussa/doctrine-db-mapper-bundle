@@ -8,6 +8,9 @@ use App\Bundle\DbMapperBundle\Service\SchemaExtractor;
 use App\Bundle\DbMapperBundle\Service\EntityGenerator;
 use App\Bundle\DbMapperBundle\Service\RelationshipAnalyzer;
 use App\Bundle\DbMapperBundle\Service\SchemaSynchronizer;
+use Doctrine\DBAL\Connection;
+use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -27,6 +30,7 @@ class GenerateEntitiesCommand extends Command
     private EntityGenerator $entityGenerator;
     private RelationshipAnalyzer $relationshipAnalyzer;
     private SchemaSynchronizer $schemaSynchronizer;
+    private EntityManagerInterface $entityManager;
     private array $ignoredTables;
 
     public function __construct(
@@ -34,12 +38,14 @@ class GenerateEntitiesCommand extends Command
         EntityGenerator $entityGenerator,
         RelationshipAnalyzer $relationshipAnalyzer,
         SchemaSynchronizer $schemaSynchronizer,
+        EntityManagerInterface $entityManager,
         array $ignoredTables = ['messenger_messages']
     ) {
         $this->schemaExtractor = $schemaExtractor;
         $this->entityGenerator = $entityGenerator;
         $this->relationshipAnalyzer = $relationshipAnalyzer;
         $this->schemaSynchronizer = $schemaSynchronizer;
+        $this->entityManager = $entityManager;
         $this->ignoredTables = array_map('strtolower', $ignoredTables);
         parent::__construct();
     }
@@ -227,32 +233,236 @@ class GenerateEntitiesCommand extends Command
         }
 
         // === PHASE 5: Synchronisation post-génération ===
-        // Aligner automatiquement la base de données avec le mapping Doctrine généré
-        // (résout les diffs cosmétiques : text→longtext, renommage d'index FK, etc.)
+        // On utilise --dump-sql en sous-processus (pour charger les nouvelles entités),
+        // puis on exécute le SQL via la connexion active.
+        // Pour les ALTER TABLE DROP PRIMARY KEY (erreur MySQL 1553), on drop les FK
+        // dépendantes → modifie la PK → recrée les FK.
         $output->writeln('<info>🔄 Synchronisation de la base de données avec le mapping généré...</info>');
 
-        $syncProcess = new Process(['php', 'bin/console', 'doctrine:schema:update', '--force', '--env=dev']);
-        $syncProcess->setTimeout(60);
-        $syncProcess->run();
+        $dumpProcess = new Process(['php', 'bin/console', 'doctrine:schema:update', '--dump-sql', '--env=dev']);
+        $dumpProcess->setTimeout(60);
+        $dumpProcess->run();
 
-        if ($syncProcess->isSuccessful()) {
-            $syncOutput = trim($syncProcess->getOutput());
-            if (str_contains($syncOutput, 'Nothing to update')) {
-                $output->writeln('<info>✅ Base de données déjà synchronisée.</info>');
-            } else {
-                $output->writeln('<info>✅ Base de données synchronisée avec le mapping Doctrine.</info>');
-            }
+        $sqlStatements = $this->parseSqlFromDumpOutput($dumpProcess->getOutput());
+
+        if (empty($sqlStatements)) {
+            $output->writeln('<info>✅ Base de données déjà synchronisée.</info>');
         } else {
-            $output->writeln('<comment>⚠️  La synchronisation automatique a échoué.</comment>');
-            $errorOutput = trim($syncProcess->getErrorOutput());
-            if (!empty($errorOutput)) {
-                $output->writeln("<comment>   Erreur : $errorOutput</comment>");
+            /** @var Connection $connection */
+            $connection = $this->entityManager->getConnection();
+            try {
+                $this->executeSchemaStatements($connection, $sqlStatements);
+                $output->writeln('<info>✅ Base de données synchronisée avec le mapping Doctrine.</info>');
+            } catch (\Throwable $e) {
+                $output->writeln('<comment>⚠️  La synchronisation automatique a échoué : ' . $e->getMessage() . '</comment>');
+                $output->writeln('<comment>   Vous pouvez synchroniser manuellement avec : php bin/console doctrine:schema:update --force</comment>');
             }
-            $output->writeln('<comment>   Vous pouvez synchroniser manuellement avec : php bin/console doctrine:schema:update --force</comment>');
         }
 
         $output->writeln('<info>✨ Génération terminée avec succès !</info>');
         return Command::SUCCESS;
+    }
+
+    /**
+     * Exécute les instructions SQL avec gestion spéciale pour DROP PRIMARY KEY.
+     * MySQL bloque cette opération (erreur 1553) si des FK d'autres tables référencent la PK.
+     * Solution : drop FK dépendantes → modifier PK → recréer FK.
+     *
+     * @param array<int, string> $sqlStatements
+     */
+    private function executeSchemaStatements(Connection $connection, array $sqlStatements): void
+    {
+        foreach ($sqlStatements as $sql) {
+            if (preg_match('/ALTER\s+TABLE\s+`?(\w+)`?.*DROP\s+PRIMARY\s+KEY/i', $sql, $matches)) {
+                $this->executeAlterPkSafely($connection, $matches[1], $sql);
+            } else {
+                $connection->executeStatement($sql);
+            }
+        }
+    }
+
+    /**
+     * Modifie une PRIMARY KEY en gérant les contraintes FK qui bloquent l'opération.
+     *
+     * MySQL erreur 1553 : "Cannot drop index 'PRIMARY': needed in a foreign key constraint"
+     * → causé par les FK **définies SUR cette table** qui utilisent la PK comme index support.
+     * → causé aussi par les FK d'autres tables qui référencent cette table.
+     *
+     * Solution : drop toutes les FK impactées → modifier PK → recréer les FK.
+     */
+    private function executeAlterPkSafely(Connection $connection, string $tableName, string $alterSql): void
+    {
+        $database = $connection->getDatabase();
+
+        // --- Cas 1 : FK définies SUR la table (elles utilisent la PK comme index) ---
+        $ownRows = $connection->fetchAllAssociative(
+            "SELECT
+                kcu.CONSTRAINT_NAME,
+                kcu.COLUMN_NAME,
+                kcu.REFERENCED_TABLE_NAME,
+                kcu.REFERENCED_COLUMN_NAME,
+                kcu.ORDINAL_POSITION,
+                rc.UPDATE_RULE,
+                rc.DELETE_RULE
+             FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+             INNER JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+                 ON rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+                 AND rc.CONSTRAINT_SCHEMA = kcu.TABLE_SCHEMA
+             WHERE kcu.TABLE_SCHEMA = :db
+                 AND kcu.TABLE_NAME = :table
+             ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
+            ['db' => $database, 'table' => $tableName]
+        );
+
+        $ownFks = [];
+        foreach ($ownRows as $row) {
+            $key = $row['CONSTRAINT_NAME'];
+            if (!isset($ownFks[$key])) {
+                $ownFks[$key] = [
+                    'constraint' => $row['CONSTRAINT_NAME'],
+                    'columns'    => [],
+                    'refTable'   => $row['REFERENCED_TABLE_NAME'],
+                    'refColumns' => [],
+                    'updateRule' => $row['UPDATE_RULE'],
+                    'deleteRule' => $row['DELETE_RULE'],
+                ];
+            }
+            $ownFks[$key]['columns'][]    = $row['COLUMN_NAME'];
+            $ownFks[$key]['refColumns'][] = $row['REFERENCED_COLUMN_NAME'];
+        }
+
+        // --- Cas 2 : FK d'autres tables qui référencent cette table ---
+        $refRows = $connection->fetchAllAssociative(
+            "SELECT
+                kcu.TABLE_NAME AS CHILD_TABLE,
+                kcu.CONSTRAINT_NAME,
+                kcu.COLUMN_NAME,
+                kcu.REFERENCED_COLUMN_NAME,
+                kcu.ORDINAL_POSITION,
+                rc.UPDATE_RULE,
+                rc.DELETE_RULE
+             FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+             INNER JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+                 ON rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+                 AND rc.CONSTRAINT_SCHEMA = kcu.TABLE_SCHEMA
+             WHERE kcu.REFERENCED_TABLE_SCHEMA = :db
+                 AND kcu.REFERENCED_TABLE_NAME = :table
+             ORDER BY kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
+            ['db' => $database, 'table' => $tableName]
+        );
+
+        $refFks = [];
+        foreach ($refRows as $row) {
+            $key = $row['CHILD_TABLE'] . '.' . $row['CONSTRAINT_NAME'];
+            if (!isset($refFks[$key])) {
+                $refFks[$key] = [
+                    'childTable' => $row['CHILD_TABLE'],
+                    'constraint' => $row['CONSTRAINT_NAME'],
+                    'columns'    => [],
+                    'refColumns' => [],
+                    'updateRule' => $row['UPDATE_RULE'],
+                    'deleteRule' => $row['DELETE_RULE'],
+                ];
+            }
+            $refFks[$key]['columns'][]    = $row['COLUMN_NAME'];
+            $refFks[$key]['refColumns'][] = $row['REFERENCED_COLUMN_NAME'];
+        }
+
+        // 1. Supprimer les FK définies SUR cette table
+        foreach ($ownFks as $fk) {
+            $connection->executeStatement(
+                sprintf('ALTER TABLE `%s` DROP FOREIGN KEY `%s`', $tableName, $fk['constraint'])
+            );
+        }
+
+        // 2. Supprimer les FK des tables enfants qui référencent cette table
+        foreach ($refFks as $fk) {
+            $connection->executeStatement(
+                sprintf('ALTER TABLE `%s` DROP FOREIGN KEY `%s`', $fk['childTable'], $fk['constraint'])
+            );
+        }
+
+        // 3. Modifier la PRIMARY KEY
+        $connection->executeStatement($alterSql);
+
+        // 4. Recréer les FK définies SUR cette table
+        foreach ($ownFks as $fk) {
+            $cols    = '`' . implode('`, `', $fk['columns']) . '`';
+            $refCols = '`' . implode('`, `', $fk['refColumns']) . '`';
+            $connection->executeStatement(
+                sprintf(
+                    'ALTER TABLE `%s` ADD CONSTRAINT `%s` FOREIGN KEY (%s) REFERENCES `%s` (%s) ON DELETE %s ON UPDATE %s',
+                    $tableName,
+                    $fk['constraint'],
+                    $cols,
+                    $fk['refTable'],
+                    $refCols,
+                    $fk['deleteRule'],
+                    $fk['updateRule']
+                )
+            );
+        }
+
+        // 5. Recréer les FK des tables enfants
+        foreach ($refFks as $fk) {
+            $cols    = '`' . implode('`, `', $fk['columns']) . '`';
+            $refCols = '`' . implode('`, `', $fk['refColumns']) . '`';
+            $connection->executeStatement(
+                sprintf(
+                    'ALTER TABLE `%s` ADD CONSTRAINT `%s` FOREIGN KEY (%s) REFERENCES `%s` (%s) ON DELETE %s ON UPDATE %s',
+                    $fk['childTable'],
+                    $fk['constraint'],
+                    $cols,
+                    $tableName,
+                    $refCols,
+                    $fk['deleteRule'],
+                    $fk['updateRule']
+                )
+            );
+        }
+    }
+
+    /**
+     * Parse les instructions SQL depuis la sortie de "doctrine:schema:update --dump-sql".
+     * Gère les instructions mono-ligne et multi-lignes (ex: CREATE TABLE).
+     *
+     * @return array<int, string>
+     */
+    private function parseSqlFromDumpOutput(string $output): array
+    {
+        $sqlStatements = [];
+        $buffer        = '';
+        $inStatement   = false;
+
+        foreach (explode("\n", $output) as $line) {
+            $trimmed = trim($line);
+
+            if (empty($trimmed)) {
+                continue;
+            }
+
+            if (!$inStatement && preg_match('/^(ALTER|CREATE|DROP|UPDATE|INSERT|DELETE|RENAME|TRUNCATE)\b/i', $trimmed)) {
+                $inStatement = true;
+                $buffer      = $trimmed;
+            } elseif ($inStatement) {
+                $buffer .= ' ' . $trimmed;
+            }
+
+            if ($inStatement && str_ends_with(rtrim($trimmed), ';')) {
+                $sql = rtrim(trim($buffer), ';');
+                if (!empty($sql)) {
+                    $sqlStatements[] = $sql;
+                }
+                $buffer      = '';
+                $inStatement = false;
+            }
+        }
+
+        if ($inStatement && !empty(trim($buffer))) {
+            $sqlStatements[] = rtrim(trim($buffer), ';');
+        }
+
+        return array_values(array_filter($sqlStatements));
     }
 
     private function handleSchemaSynchronization(OutputInterface $output, bool $preview, bool $synchronize): void
