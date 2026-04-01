@@ -9,10 +9,13 @@ services:
         arguments:
             $relationshipAnalyzer: '@App\Bundle\DbMapperBundle\Service\RelationshipAnalyzer'
 
+    App\Bundle\DbMapperBundle\Service\EntityMerger: ~
+
     App\Bundle\DbMapperBundle\Command\GenerateEntitiesCommand:
         arguments:
             $schemaExtractor: '@App\Bundle\DbMapperBundle\Service\SchemaExtractor'
             $entityGenerator: '@App\Bundle\DbMapperBundle\Service\EntityGenerator'
+            $entityMerger: '@App\Bundle\DbMapperBundle\Service\EntityMerger'
             $relationshipAnalyzer: '@App\Bundle\DbMapperBundle\Service\RelationshipAnalyzer'
             $schemaSynchronizer: '@App\Bundle\DbMapperBundle\Service\SchemaSynchronizer'
             $entityManager: '@doctrine.orm.entity_manager'

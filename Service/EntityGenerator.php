@@ -424,21 +424,24 @@ PHP;
     }
 
     /**
-     * Normalise le nom d'une propriété de relation en supprimant les préfixes "id".
+     * Extrait le nom de propriété depuis une colonne FK.
+     * Ex: id_constat → constat, idProprietaire → proprietaire, chantier_id → chantier
      */
     private function cleanRelationPropertyName(string $columnName, string $referencedTable): string
     {
-        $propertyName = $this->snakeToCamel($columnName);
-        $referencedEntityName = $this->snakeToCamel($referencedTable);
+        $camelName = $this->snakeToCamel($columnName);
 
-        if (str_starts_with($propertyName, 'id')) {
-            $withoutId = substr($propertyName, 2);
-            if (strcasecmp($withoutId, $referencedEntityName) === 0) {
-                return lcfirst($withoutId);
-            }
+        // Préfixe id : id_constat → constat, idProprietaire → proprietaire
+        if (str_starts_with($camelName, 'id') && strlen($camelName) > 2) {
+            return lcfirst(substr($camelName, 2));
         }
 
-        return lcfirst($this->singularize($referencedEntityName));
+        // Suffixe Id : chantierId → chantier
+        if (str_ends_with($camelName, 'Id') && strlen($camelName) > 2) {
+            return lcfirst(substr($camelName, 0, -2));
+        }
+
+        return lcfirst($this->singularize($this->snakeToCamel($referencedTable)));
     }
 
     private function singularize(string $word): string

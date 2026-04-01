@@ -6,6 +6,7 @@ namespace App\Bundle\DbMapperBundle\Command;
 
 use App\Bundle\DbMapperBundle\Service\SchemaExtractor;
 use App\Bundle\DbMapperBundle\Service\EntityGenerator;
+use App\Bundle\DbMapperBundle\Service\EntityMerger;
 use App\Bundle\DbMapperBundle\Service\RelationshipAnalyzer;
 use App\Bundle\DbMapperBundle\Service\SchemaSynchronizer;
 use Doctrine\DBAL\Connection;
@@ -28,6 +29,7 @@ class GenerateEntitiesCommand extends Command
 {
     private SchemaExtractor $schemaExtractor;
     private EntityGenerator $entityGenerator;
+    private EntityMerger $entityMerger;
     private RelationshipAnalyzer $relationshipAnalyzer;
     private SchemaSynchronizer $schemaSynchronizer;
     private EntityManagerInterface $entityManager;
@@ -36,17 +38,19 @@ class GenerateEntitiesCommand extends Command
     public function __construct(
         SchemaExtractor $schemaExtractor,
         EntityGenerator $entityGenerator,
+        EntityMerger $entityMerger,
         RelationshipAnalyzer $relationshipAnalyzer,
         SchemaSynchronizer $schemaSynchronizer,
         EntityManagerInterface $entityManager,
         array $ignoredTables = ['messenger_messages']
     ) {
-        $this->schemaExtractor = $schemaExtractor;
-        $this->entityGenerator = $entityGenerator;
+        $this->schemaExtractor      = $schemaExtractor;
+        $this->entityGenerator      = $entityGenerator;
+        $this->entityMerger         = $entityMerger;
         $this->relationshipAnalyzer = $relationshipAnalyzer;
-        $this->schemaSynchronizer = $schemaSynchronizer;
-        $this->entityManager = $entityManager;
-        $this->ignoredTables = array_map('strtolower', $ignoredTables);
+        $this->schemaSynchronizer   = $schemaSynchronizer;
+        $this->entityManager        = $entityManager;
+        $this->ignoredTables        = array_map('strtolower', $ignoredTables);
         parent::__construct();
     }
 
@@ -55,6 +59,7 @@ class GenerateEntitiesCommand extends Command
         $this
             ->addArgument('output-dir', InputArgument::REQUIRED, 'Répertoire de sortie pour les entités générées')
             ->addOption('force', null, InputOption::VALUE_NONE, 'Écrase les entités et repositories existants')
+            ->addOption('merge', null, InputOption::VALUE_NONE, 'Régénère le mapping en préservant le code custom (méthodes, interfaces, traits)')
             ->addOption('table', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Ne régénère que les tables spécifiées (ex: --table=users --table=posts)')
             ->addOption('schema-preview', null, InputOption::VALUE_NONE, 'Affiche le SQL que Doctrine exécuterait pour synchroniser la base avant la génération')
             ->addOption('schema-sync', null, InputOption::VALUE_NONE, 'Applique automatiquement le diff SQL Doctrine avant la génération');
@@ -64,6 +69,7 @@ class GenerateEntitiesCommand extends Command
     {
         $outputDir = $input->getArgument('output-dir');
         $force = (bool) $input->getOption('force');
+        $merge = (bool) $input->getOption('merge');
         $targetTables = array_map('strtolower', $input->getOption('table') ?? []);
         $previewSchema = (bool) $input->getOption('schema-preview');
         $syncSchema = (bool) $input->getOption('schema-sync');
@@ -165,7 +171,7 @@ class GenerateEntitiesCommand extends Command
             $indexes = $data['indexes'] ?? [];
 
             $entityExisted = file_exists($entityPath);
-            if ($force || !$entityExisted) {
+            if ($force || $merge || !$entityExisted) {
                 $entityCode = $this->entityGenerator->generateEntityCode(
                     $table,
                     $columns,
@@ -176,6 +182,16 @@ class GenerateEntitiesCommand extends Command
                     $uniqueConstraints,
                     $indexes
                 );
+
+                // Mode merge : préserver le code custom de l'entité existante
+                if ($merge && $entityExisted) {
+                    $existingCode = file_get_contents($entityPath);
+                    $entityCode   = $this->entityMerger->merge($existingCode, $entityCode);
+                    $actionLabel  = '🔀 Entité fusionnée';
+                } else {
+                    $actionLabel = $force && $entityExisted ? '♻️ Entité régénérée' : '✅ Entité générée';
+                }
+
                 file_put_contents($entityPath, $entityCode);
 
                 $relationInfo = '';
@@ -186,7 +202,6 @@ class GenerateEntitiesCommand extends Command
                     $relationInfo .= ' [' . count($manyToManyRelations) . ' ManyToMany]';
                 }
 
-                $actionLabel = $force && $entityExisted ? '♻️ Entité régénérée' : '✅ Entité générée';
                 $output->writeln("{$actionLabel} : $className" . $relationInfo);
             } else {
                 $output->writeln("⏭️  Entité déjà existante : $className");
