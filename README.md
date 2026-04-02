@@ -53,11 +53,11 @@ This shows the SQL Doctrine would run to align the database before entities are 
 When an entity file already exists, the bundle automatically merges the generated code with your existing file. Custom methods, non-ORM properties, interfaces, traits, and `use` statements are preserved.
 
 ```bash
-# Regenerate all entities (custom code is preserved)
-php bin/console dbmapper:generate-entities src/Entity
+# Regenerate all entities while preserving custom code
+php bin/console dbmapper:generate-entities src/Entity --merge
 
-# Regenerate a specific table only
-php bin/console dbmapper:generate-entities src/Entity --table=users
+# Regenerate a specific table only while preserving custom code
+php bin/console dbmapper:generate-entities src/Entity --merge --table=users
 ```
 
 ### 📋 Output example
@@ -260,11 +260,11 @@ Affiche les requêtes SQL que Doctrine exécuterait pour synchroniser la base av
 Lorsqu'un fichier d'entité existe déjà, le bundle fusionne automatiquement le code généré avec le fichier existant. Les méthodes custom, les propriétés non-ORM, les interfaces, les traits et les `use` statements sont préservés.
 
 ```bash
-# Régénérer toutes les entités (le code custom est préservé)
-php bin/console dbmapper:generate-entities src/Entity
+# Régénérer toutes les entités en préservant le code custom
+php bin/console dbmapper:generate-entities src/Entity --merge
 
-# Régénérer une table spécifique uniquement
-php bin/console dbmapper:generate-entities src/Entity --table=users
+# Régénérer une table spécifique uniquement en préservant le code custom
+php bin/console dbmapper:generate-entities src/Entity --merge --table=users
 ```
 
 ### 📋 Exemple de sortie
