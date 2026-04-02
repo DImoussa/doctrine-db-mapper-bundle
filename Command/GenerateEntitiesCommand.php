@@ -130,7 +130,7 @@ class GenerateEntitiesCommand extends Command
             $output->writeln('<comment>  → Tables d\'association ManyToMany détectées: ' . implode(', ', $manyToManyTables) . '</comment>');
         }
 
-        
+
         foreach ($this->relationshipAnalyzer->getAllManyToManyTables() as $m2mTable) {
             $m2mClassName  = $this->entityGenerator->snakeToCamel($m2mTable, true);
             $m2mEntityPath = $normalizedOutputDir . DIRECTORY_SEPARATOR . $m2mClassName . '.php';
@@ -233,6 +233,29 @@ class GenerateEntitiesCommand extends Command
             }
         }
 
+        // === PHASE 3.5: Nettoyage des entités orphelines ===
+        // Détecte les entités dont la table correspondante est absente de la base de données.
+        // Les propriétés ORM de type relation sont supprimées pour assurer la cohérence du mapping Doctrine.
+        $entityFiles     = glob($normalizedOutputDir . DIRECTORY_SEPARATOR . '*.php') ?: [];
+        $knownTableNames = array_map('strtolower', array_keys($allTablesData));
+
+        foreach ($entityFiles as $entityFilePath) {
+            $entityCode = file_get_contents($entityFilePath);
+            if (!preg_match('/#\[ORM\\\Table\(name:\s*["\']([^"\']+)["\']/i', $entityCode, $tableMatch)) {
+                continue;
+            }
+            $entityTableName = strtolower($tableMatch[1]);
+            if (in_array($entityTableName, $knownTableNames, true)
+                || in_array($entityTableName, $this->ignoredTables, true)) {
+                continue;
+            }
+            $cleaned = $this->entityMerger->cleanOrphanedRelations($entityCode);
+            if ($cleaned !== $entityCode) {
+                file_put_contents($entityFilePath, $cleaned);
+                $output->writeln('<comment>  ⚠️  \'' . $entityTableName . '\' absent de la base → relations ORM supprimées dans ' . basename($entityFilePath, '.php') . '.</comment>');
+            }
+        }
+
         // === PHASE 4: Nettoyer le cache ===
         $output->writeln('<info>🧹 Nettoyage du cache Symfony...</info>');
 
@@ -314,10 +337,23 @@ class GenerateEntitiesCommand extends Command
 
         try {
             foreach ($sqlStatements as $sql) {
-                if (preg_match('/ALTER\s+TABLE\s+`?(\w+)`?.*DROP\s+PRIMARY\s+KEY/i', $sql, $matches)) {
-                    $this->executeAlterPkSafely($connection, $matches[1], $sql);
-                } else {
-                    $connection->executeStatement($sql);
+                try {
+                    if (preg_match('/ALTER\s+TABLE\s+`?(\w+)`?.*DROP\s+PRIMARY\s+KEY/i', $sql, $matches)) {
+                        $this->executeAlterPkSafely($connection, $matches[1], $sql);
+                    } else {
+                        $connection->executeStatement($sql);
+                    }
+                } catch (\Throwable $e) {
+                    // Erreurs 1091 (ER_CANT_DROP_FIELD_OR_KEY) et 1176 (ER_KEY_DOES_NOT_EXITS) :
+                    // la clé ou l'index à supprimer n'existe pas, l'instruction peut être ignorée.
+                    if (preg_match('/DROP\s+(INDEX|KEY|FOREIGN\s+KEY)/i', $sql)
+                        && (str_contains($e->getMessage(), '1091')
+                            || str_contains($e->getMessage(), '1176')
+                            || str_contains($e->getMessage(), "Can't DROP")
+                            || str_contains($e->getMessage(), "doesn't exist"))) {
+                        continue;
+                    }
+                    throw $e;
                 }
             }
         } finally {

@@ -66,6 +66,8 @@ class EntityMerger
             $this->mergeConstructorInits($existingClass, $newClass, $preservedPropNames);
             $this->injectPropertiesBeforeMethods($newClass, $customProperties);
         }
+
+        foreach ($customMethods as $method) {
             $newClass->stmts[] = $method;
         }
 
@@ -314,6 +316,104 @@ class EntityMerger
         }
 
         array_splice($class->stmts, $insertAt, 0, $properties);
+    }
+
+    /**
+     * Supprime les propriétés ORM de type relation (OneToMany, ManyToOne, ManyToMany, OneToOne)
+     * et leurs méthodes associées d'une entité orpheline dont la table est absente de la base.
+     * Les propriétés scalaires (#[ORM\Column]) et le code custom sont conservés.
+     */
+    public function cleanOrphanedRelations(string $existingCode): string
+    {
+        $ast = $this->parser->parse($existingCode);
+        if (!$ast) {
+            return $existingCode;
+        }
+
+        $class = $this->findClass($ast);
+        if (!$class) {
+            return $existingCode;
+        }
+
+        $propNamesToRemove = [];
+        $retainedStmts     = [];
+
+        foreach ($class->stmts as $stmt) {
+            if ($stmt instanceof Stmt\Property && $this->hasOrmRelationAttribute($stmt)) {
+                foreach ($stmt->props as $prop) {
+                    $propNamesToRemove[] = (string) $prop->name;
+                }
+            } else {
+                $retainedStmts[] = $stmt;
+            }
+        }
+
+        if (empty($propNamesToRemove)) {
+            return $existingCode;
+        }
+
+        $finalStmts = [];
+        foreach ($retainedStmts as $stmt) {
+            if ($stmt instanceof Stmt\ClassMethod) {
+                if ((string) $stmt->name === '__construct') {
+                    $stmt->stmts = array_values(array_filter(
+                        $stmt->stmts ?? [],
+                        function ($s) use ($propNamesToRemove) {
+                            return !($s instanceof Node\Stmt\Expression
+                                && $s->expr instanceof Node\Expr\Assign
+                                && $s->expr->var instanceof Node\Expr\PropertyFetch
+                                && $s->expr->var->var instanceof Node\Expr\Variable
+                                && (string) $s->expr->var->var->name === 'this'
+                                && in_array((string) $s->expr->var->name, $propNamesToRemove, true));
+                        }
+                    ));
+                    $finalStmts[] = $stmt;
+                    continue;
+                }
+
+                if ($this->methodReferencesProperties($stmt, $propNamesToRemove)) {
+                    continue;
+                }
+            }
+            $finalStmts[] = $stmt;
+        }
+
+        $class->stmts = $finalStmts;
+
+        return "<?php\n\n" . $this->printer->prettyPrint($ast) . "\n";
+    }
+
+    /**
+     * Vérifie si une propriété porte un attribut ORM de type relation.
+     */
+    private function hasOrmRelationAttribute(Stmt\Property $property): bool
+    {
+        foreach ($property->attrGroups as $attrGroup) {
+            foreach ($attrGroup->attrs as $attr) {
+                $attrName = (string) $attr->name;
+                foreach (['ManyToOne', 'OneToMany', 'ManyToMany', 'OneToOne'] as $relationType) {
+                    if (str_ends_with($attrName, $relationType)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Vérifie si une méthode contient une référence à l'une des propriétés données via $this->propName.
+     *
+     * @param array<string> $propertyNames
+     */
+    private function methodReferencesProperties(Stmt\ClassMethod $method, array $propertyNames): bool
+    {
+        return !empty($this->nodeFinder->find($method, function (Node $node) use ($propertyNames) {
+            return $node instanceof Node\Expr\PropertyFetch
+                && $node->var instanceof Node\Expr\Variable
+                && (string) $node->var->name === 'this'
+                && in_array((string) $node->name, $propertyNames, true);
+        }));
     }
 }
 
