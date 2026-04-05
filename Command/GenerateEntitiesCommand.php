@@ -285,7 +285,7 @@ class GenerateEntitiesCommand extends Command
         $output->writeln('<info>🧹 Nettoyage du cache Symfony...</info>');
 
         // Sur Windows, utiliser --no-warmup pour éviter les problèmes de verrouillage de fichiers
-        $cacheProcess = new Process(['php', 'bin/console', 'cache:clear', '--no-warmup', '--env=dev']);
+        $cacheProcess = new Process([PHP_BINARY, 'bin/console', 'cache:clear', '--no-warmup', '--env=dev']);
         $cacheProcess->setTimeout(30);
         $cacheProcess->run();
 
@@ -293,7 +293,7 @@ class GenerateEntitiesCommand extends Command
             // Tentative avec cache:pool:clear en cas d'échec
             $output->writeln('<comment>⚠️  Nettoyage standard échoué, tentative alternative...</comment>');
 
-            $poolClearProcess = new Process(['php', 'bin/console', 'cache:pool:clear', 'cache.global_clearer', '--env=dev']);
+            $poolClearProcess = new Process([PHP_BINARY, 'bin/console', 'cache:pool:clear', 'cache.global_clearer', '--env=dev']);
             $poolClearProcess->setTimeout(10);
             $poolClearProcess->run();
 
@@ -314,7 +314,7 @@ class GenerateEntitiesCommand extends Command
         // dépendantes → modifie la PK → recrée les FK.
         $output->writeln('<info>🔄 Synchronisation de la base de données avec le mapping généré...</info>');
 
-        $dumpProcess = new Process(['php', 'bin/console', 'doctrine:schema:update', '--dump-sql', '--env=dev']);
+        $dumpProcess = new Process([PHP_BINARY, 'bin/console', 'doctrine:schema:update', '--dump-sql', '--env=dev']);
         $dumpProcess->setTimeout(60);
         $dumpProcess->run();
 
