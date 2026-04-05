@@ -124,7 +124,7 @@ PHP;
             $definedProperties[$propertyName] = true;
         }
 
-        // Relations ManyToOne â€” regrouper les FK par table cible pour dÃ©tecter les FK multiples
+        // Relations ManyToOne â€” regrouper les FK par table cible pour détecter les FK multiples
         $fkGroupedByTarget = [];
         foreach ($foreignKeys as $fk) {
             $targetTable = $fk['REFERENCED_TABLE_NAME'];
@@ -177,7 +177,7 @@ PHP;
             $relationPropertyNames[$fk['COLUMN_NAME']] = $propertyName;
         }
 
-        // Relations OneToMany (cÃ´tÃ© inverse)
+        // Relations OneToMany (côté inverse)
         $addedInverseRelations = [];
         $inverseGroupedBySource = [];
         foreach ($inverseRelations as $relation) {
@@ -285,7 +285,7 @@ PHP;
             $generatedAccessors[$propertyName] = true;
         }
 
-        // MÃ©thodes de collection pour OneToMany
+        // Méthodes de collection pour OneToMany
         $processedOneToManyMethods = [];
         $inverseGroupedBySource = [];
         foreach ($inverseRelations as $relation) {
@@ -341,7 +341,7 @@ PHP;
             $code .= "        return \$this;\n    }\n\n";
         }
 
-        // MÃ©thodes de collection pour ManyToMany
+        // Méthodes de collection pour ManyToMany
         foreach ($manyToManyPropertyMap as $entry) {
             $relation = $entry['relation'];
             $targetEntity = $entry['targetEntity'];
@@ -381,7 +381,7 @@ PHP;
     }
 
     /**
-     * Extrait un nom sÃ©mantique depuis une colonne FK.
+     * Extrait un nom sémantique depuis une colonne FK.
      * Ex: sender_id â†’ sender, author_id â†’ author
      */
     private function extractSemanticName(string $columnName, string $targetTable): string
@@ -404,7 +404,7 @@ PHP;
     }
 
     /**
-     * GÃ©nÃ¨re un nom inversedBy pour les FK multiples vers une mÃªme table.
+     * Génère un nom inversedBy pour les FK multiples vers une même table.
      * Ex: sender â†’ sentMessages, receiver â†’ receivedMessages
      */
     private function generateInversedByName(string $propertyName, string $entityName): string
@@ -428,14 +428,14 @@ PHP;
     }
 
     /**
-     * Extrait le nom de propriÃ©tÃ© depuis une colonne FK.
+     * Extrait le nom de propriété depuis une colonne FK.
      * Ex: id_constat â†’ constat, idProprietaire â†’ proprietaire, chantier_id â†’ chantier
      */
     private function cleanRelationPropertyName(string $columnName, string $referencedTable): string
     {
         $camelName = $this->snakeToCamel($columnName);
 
-        // PrÃ©fixe id : id_constat â†’ constat, idProprietaire â†’ proprietaire
+        // Préfixe id : id_constat â†’ constat, idProprietaire â†’ proprietaire
         if (str_starts_with($camelName, 'id') && strlen($camelName) > 2) {
             return lcfirst(substr($camelName, 2));
         }
@@ -589,7 +589,7 @@ PHP;
         $code  = "    public function get$methodName(): {$nullableType}$phpType\n    {\n";
         $code .= "        return \$this->$propertyName;\n    }\n\n";
 
-        // Pas de setter pour les PK auto-gÃ©nÃ©rÃ©es
+        // Pas de setter pour les PK auto-générées
         if (!$isPrimaryKey) {
             $code .= "    public function set$methodName({$nullableType}$phpType \$$propertyName): self\n    {\n";
             $code .= "        \$this->$propertyName = \$$propertyName;\n\n";
@@ -601,7 +601,12 @@ PHP;
 
     public function snakeToCamel(string $string, bool $capitalizeFirst = false): string
     {
+        $string = str_replace('-', '_', $string);
         $result = str_replace('_', '', ucwords($string, '_'));
+
+        if ($result !== '' && ctype_digit($result[0])) {
+            $result = 'E' . $result;
+        }
         if (!$capitalizeFirst) {
             $result = lcfirst($result);
         }
@@ -654,7 +659,7 @@ PHP;
     }
 
     /**
-     * DÃ©tecte la clÃ© primaire Ã  partir des conventions de nommage courantes.
+     * Détecte la clé primaire à partir des conventions de nommage courantes.
      */
     public function detectPrimaryKey(string $tableName, array $columns): array
     {
@@ -752,7 +757,7 @@ PHP;
     }
 
     /**
-     * Retourne vrai si toutes les clÃ©s primaires sont aussi des clÃ©s Ã©trangÃ¨res (table d'association).
+     * Retourne vrai si toutes les clés primaires sont aussi des clés étrangères (table d'association).
      */
     private function isAssociationTable(array $primaryKeys, array $foreignKeys): bool
     {

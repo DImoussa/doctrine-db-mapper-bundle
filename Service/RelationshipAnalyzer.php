@@ -218,7 +218,11 @@ class RelationshipAnalyzer
 
     private function snakeToCamel(string $value, bool $capitalizeFirst = false): string
     {
+        $value  = str_replace('-', '_', $value);
         $result = str_replace('_', '', ucwords($value, '_'));
+        if ($result !== '' && ctype_digit($result[0])) {
+            $result = 'E' . $result;
+        }
         return $capitalizeFirst ? $result : lcfirst($result);
     }
 
