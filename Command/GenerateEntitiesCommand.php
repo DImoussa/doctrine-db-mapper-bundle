@@ -328,6 +328,18 @@ class GenerateEntitiesCommand extends Command
             try {
                 $this->executeSchemaStatements($connection, $sqlStatements);
                 $output->writeln('<info>✅ Base de données synchronisée avec le mapping Doctrine.</info>');
+
+                // Second passage : après le premier sync, Doctrine peut encore détecter des diffs
+                // résiduels (ex: renommages d'index générés par les nouvelles FK). On les applique
+                // automatiquement pour éviter à l'utilisateur un --force manuel.
+                $dumpProcess2 = new Process([PHP_BINARY, 'bin/console', 'doctrine:schema:update', '--dump-sql', '--env=dev']);
+                $dumpProcess2->setTimeout(60);
+                $dumpProcess2->run();
+                $residualSql = $this->parseSqlFromDumpOutput($dumpProcess2->getOutput());
+                if (!empty($residualSql)) {
+                    $this->executeSchemaStatements($connection, $residualSql);
+                    $output->writeln('<info>✅ Diffs résiduels appliqués (' . count($residualSql) . ' instruction(s)).</info>');
+                }
             } catch (\Throwable $e) {
                 $output->writeln('<comment>⚠️  La synchronisation automatique a échoué : ' . $e->getMessage() . '</comment>');
                 $output->writeln('<comment>   Vous pouvez synchroniser manuellement avec : php bin/console doctrine:schema:update --force</comment>');
