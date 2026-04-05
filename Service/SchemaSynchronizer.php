@@ -32,7 +32,10 @@ class SchemaSynchronizer
     }
 
     /**
-     * Applique les instructions SQL en attente et retourne celles exÃ©cutÃ©es.
+     * Exécute les instructions SQL de mise à jour du schéma et retourne celles appliquées.
+     *
+     * Sur MySQL, les vérifications de clés étrangères sont temporairement désactivées
+     * afin de permettre les modifications de clés primaires sans erreur de contrainte.
      *
      * @return array<int, string>
      * @throws SchemaSynchronizationException
