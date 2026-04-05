@@ -78,6 +78,10 @@ PHP;
             $primaryKeys = $this->detectPrimaryKey($tableName, $columns);
         }
 
+        if (empty($primaryKeys) && !empty($columns)) {
+            $primaryKeys = [$columns[0]['COLUMN_NAME']];
+        }
+
         $isAssociationTable = $this->isAssociationTable($primaryKeys, $foreignKeys);
 
         $uniqueColumns = [];
