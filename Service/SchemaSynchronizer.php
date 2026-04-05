@@ -32,7 +32,7 @@ class SchemaSynchronizer
     }
 
     /**
-     * Applique les instructions SQL en attente et retourne celles exécutées.
+     * Applique les instructions SQL en attente et retourne celles exÃ©cutÃ©es.
      *
      * @return array<int, string>
      * @throws SchemaSynchronizationException
@@ -55,6 +55,12 @@ class SchemaSynchronizer
             }
 
             foreach ($sqlStatements as $sql) {
+                // InnoDB rejette DROP PRIMARY KEY (errno 44) lorsque la table contient des
+                // contraintes FK non référencées par Doctrine (noms issus du dump SQL initial).
+                // Toutes les FK sont supprimées avant l'opération, puis Doctrine les recrée.
+                if ($isMysql && preg_match('/ALTER\s+TABLE\s+`?(\w+)`?\s+DROP\s+PRIMARY\s+KEY/i', $sql, $m)) {
+                    $this->dropAllForeignKeys($connection, $m[1]);
+                }
                 $connection->executeStatement($sql);
             }
         } catch (\Throwable $exception) {
@@ -70,5 +76,26 @@ class SchemaSynchronizer
         }
 
         return $sqlStatements;
+    }
+
+    /**
+     * Supprime toutes les contraintes de clé étrangère d'une table, y compris celles
+     * dont le nom diffère des contraintes générées par Doctrine.
+     *
+     * Les erreurs sont silencieusement ignorées (table inexistante, aucune FK, etc.)
+     * afin de ne pas interrompre le flux de synchronisation.
+     */
+    private function dropAllForeignKeys(Connection $connection, string $tableName): void
+    {
+        try {
+            $fks = $connection->createSchemaManager()->listTableForeignKeys($tableName);
+            foreach ($fks as $fk) {
+                $connection->executeStatement(
+                    sprintf('ALTER TABLE `%s` DROP FOREIGN KEY `%s`', $tableName, $fk->getName())
+                );
+            }
+        } catch (\Throwable) {
+            // Ignoré : table absente ou dépourvue de contraintes FK.
+        }
     }
 }
