@@ -58,6 +58,11 @@ class EntityMerger
         $this->mergeTraits($existingClass, $newClass);
         $this->mergeUseStatements($existingAst, $newAst);
 
+        // Quand la BD n'a pas encore ses contraintes FK, le générateur produit des colonnes
+        // scalaires (#[ORM\Id] + #[ORM\GeneratedValue]) là où l'entité existante avait
+        // correctement des #[ORM\Id] + #[ORM\ManyToOne]. On restaure la version relation.
+        $this->restoreRelationPrimaryKeys($existingClass, $newClass, $customMethods);
+
         if (!empty($customProperties)) {
             $preservedPropNames = array_map(
                 fn($p) => (string) $p->props[0]->name,
@@ -267,37 +272,252 @@ class EntityMerger
         $existingUses = $this->collectUseStatements($existingAst);
         $newUses      = $this->collectUseStatements($newAst);
 
+
+        $namespaceNode = null;
+        foreach ($newAst as $node) {
+            if ($node instanceof Stmt\Namespace_) {
+                $namespaceNode = $node;
+                break;
+            }
+        }
+
         $lastUseIndex = -1;
-        foreach ($newAst as $index => $node) {
+        $targetStmts  = ($namespaceNode !== null) ? $namespaceNode->stmts : $newAst;
+        foreach ($targetStmts as $index => $node) {
             if ($node instanceof Stmt\Use_ || $node instanceof Stmt\GroupUse) {
                 $lastUseIndex = $index;
             }
         }
 
         $added = 0;
-        foreach ($existingUses as $fqcn => $useStmt) {
+        foreach ($existingUses as $fqcn => $existingData) {
+            $existingNode  = $existingData['node'];
+            $existingAlias = $existingData['alias'];
             if (!isset($newUses[$fqcn])) {
-                array_splice($newAst, $lastUseIndex + 1 + $added, 0, [$useStmt]);
+
+                if ($namespaceNode !== null) {
+                    array_splice($namespaceNode->stmts, $lastUseIndex + 1 + $added, 0, [$existingNode]);
+                } else {
+                    array_splice($newAst, $lastUseIndex + 1 + $added, 0, [$existingNode]);
+                }
                 $added++;
+            } elseif ($existingAlias !== null && $newUses[$fqcn]['alias'] === null) {
+
+                foreach ($targetStmts as &$stmt) {
+                    if (!($stmt instanceof Stmt\Use_)) {
+                        continue;
+                    }
+                    foreach ($stmt->uses as &$use) {
+                        if ((string) $use->name === $fqcn) {
+                            $use->alias = new Node\Identifier($existingAlias);
+                            break 2;
+                        }
+                    }
+                    unset($use);
+                }
+                unset($stmt);
             }
         }
     }
 
     /**
-     * @return array<string, Stmt\Use_>
+     * @return array<string, array{node: Stmt\Use_, alias: string|null}>
      */
     private function collectUseStatements(array $ast): array
     {
         $uses = [];
+
+
+        $stmts = $ast;
         foreach ($ast as $node) {
+            if ($node instanceof Stmt\Namespace_) {
+                $stmts = $node->stmts ?? [];
+                break;
+            }
+        }
+
+        foreach ($stmts as $node) {
             if (!($node instanceof Stmt\Use_)) {
                 continue;
             }
             foreach ($node->uses as $use) {
-                $uses[(string) $use->name] = $node;
+                $fqcn  = (string) $use->name;
+                $alias = $use->alias !== null ? (string) $use->alias : null;
+                $uses[$fqcn] = ['node' => $node, 'alias' => $alias];
             }
         }
         return $uses;
+    }
+
+    /**
+     * Quand la BD n'a pas ses contraintes FK, le générateur produit des colonnes scalaires
+     * (#[ORM\Id] + #[ORM\GeneratedValue] + #[ORM\Column]) à la place de relations
+     * (#[ORM\Id] + #[ORM\ManyToOne] + #[ORM\JoinColumn]).
+     * Cette méthode détecte et corrige ce cas en restaurant les ManyToOne depuis l'entité existante.
+     *
+     * @param array<Stmt\ClassMethod> $customMethods
+     */
+    private function restoreRelationPrimaryKeys(
+        Stmt\Class_ $existing,
+        Stmt\Class_ $new,
+        array &$customMethods
+    ): void {
+        // 1. Collecter les #[ORM\Id] + #[ORM\ManyToOne] de l'entité existante, indexés par JoinColumn.name
+        $existingRelPks = [];
+        foreach ($existing->stmts as $stmt) {
+            if (!($stmt instanceof Stmt\Property)) {
+                continue;
+            }
+            if (!$this->propertyHasAttr($stmt, 'Id') || !$this->propertyHasAttr($stmt, 'ManyToOne')) {
+                continue;
+            }
+            $colName = $this->getJoinColumnName($stmt);
+            if ($colName !== null) {
+                $existingRelPks[$colName] = [
+                    'property' => $stmt,
+                    'propName' => (string) $stmt->props[0]->name,
+                ];
+            }
+        }
+
+        if (empty($existingRelPks)) {
+            return;
+        }
+
+        // 2. Remplacer les propriétés scalaires (#[ORM\Id] + #[ORM\GeneratedValue]) du nouveau code
+        $replacedScalarProps = []; // ancienNomScalaire => nouveauNomRelation
+        foreach ($new->stmts as $index => $stmt) {
+            if (!($stmt instanceof Stmt\Property)) {
+                continue;
+            }
+            if (!$this->propertyHasAttr($stmt, 'Id') || !$this->propertyHasAttr($stmt, 'GeneratedValue')) {
+                continue;
+            }
+            $colName = $this->getScalarColumnName($stmt);
+            if ($colName !== null && isset($existingRelPks[$colName])) {
+                $oldPropName = (string) $stmt->props[0]->name;
+                $new->stmts[$index] = $existingRelPks[$colName]['property'];
+                $replacedScalarProps[$oldPropName] = $existingRelPks[$colName]['propName'];
+            }
+        }
+
+        if (empty($replacedScalarProps)) {
+            return;
+        }
+
+        // 3. Supprimer les getter/setter scalaires obsolètes du nouveau code
+        $new->stmts = array_values(array_filter(
+            $new->stmts,
+            function ($stmt) use ($replacedScalarProps) {
+                if (!($stmt instanceof Stmt\ClassMethod)) {
+                    return true;
+                }
+                $methodLower = strtolower((string) $stmt->name);
+                foreach (array_keys($replacedScalarProps) as $oldProp) {
+                    $base = strtolower($oldProp);
+                    if ($methodLower === 'get' . $base || $methodLower === 'set' . $base) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        ));
+
+        // 4. S'assurer que les getter/setter de la relation sont présents (depuis l'existant)
+        $newMethodNames   = $this->getMethodNames($new);
+        $existingMethodMap = [];
+        foreach ($existing->getMethods() as $m) {
+            $existingMethodMap[(string) $m->name] = $m;
+        }
+        foreach ($replacedScalarProps as $relPropName) {
+            foreach (['get', 'set'] as $prefix) {
+                $methodName = $prefix . ucfirst($relPropName);
+                if (!in_array($methodName, $newMethodNames, true) && isset($existingMethodMap[$methodName])) {
+                    $new->stmts[] = $existingMethodMap[$methodName];
+                }
+            }
+        }
+
+        // 5. Exclure de $customMethods les méthodes déjà injectées pour les relations restaurées
+        $relPropNames  = array_values($replacedScalarProps);
+        $customMethods = array_values(array_filter(
+            $customMethods,
+            function ($method) use ($relPropNames) {
+                $methodLower = strtolower((string) $method->name);
+                foreach ($relPropNames as $relProp) {
+                    $base = strtolower($relProp);
+                    if ($methodLower === 'get' . $base || $methodLower === 'set' . $base) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        ));
+    }
+
+    /**
+     * Vérifie si une propriété possède un attribut ORM dont le nom se termine par $attrName.
+     */
+    private function propertyHasAttr(Stmt\Property $property, string $attrName): bool
+    {
+        foreach ($property->attrGroups as $attrGroup) {
+            foreach ($attrGroup->attrs as $attr) {
+                $name = (string) $attr->name;
+                if ($name === $attrName || $name === 'ORM\\' . $attrName || str_ends_with($name, '\\' . $attrName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Retourne la valeur de l'argument `name` du premier attribut #[ORM\JoinColumn] trouvé.
+     */
+    private function getJoinColumnName(Stmt\Property $property): ?string
+    {
+        foreach ($property->attrGroups as $attrGroup) {
+            foreach ($attrGroup->attrs as $attr) {
+                $attrName = (string) $attr->name;
+                if ($attrName === 'ORM\\JoinColumn' || str_ends_with($attrName, '\\JoinColumn')) {
+                    foreach ($attr->args as $arg) {
+                        if ($arg->name !== null && (string) $arg->name === 'name'
+                            && $arg->value instanceof Node\Scalar\String_) {
+                            return $arg->value->value;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Retourne le nom de colonne DB d'une propriété scalaire :
+     * d'abord via l'argument `name` de #[ORM\Column], sinon par conversion camelCase → snake_case
+     * du nom de propriété (I12 : `name` absent).
+     */
+    private function getScalarColumnName(Stmt\Property $property): ?string
+    {
+        foreach ($property->attrGroups as $attrGroup) {
+            foreach ($attrGroup->attrs as $attr) {
+                $attrName = (string) $attr->name;
+                if ($attrName === 'ORM\\Column' || str_ends_with($attrName, '\\Column')) {
+                    foreach ($attr->args as $arg) {
+                        if ($arg->name !== null && (string) $arg->name === 'name'
+                            && $arg->value instanceof Node\Scalar\String_) {
+                            return $arg->value->value;
+                        }
+                    }
+                    // I12: `name` argument absent — infer column name from property name
+                    if (!empty($property->props)) {
+                        $propName = (string) $property->props[0]->name;
+                        return strtolower((string) preg_replace('/[A-Z]/', '_$0', lcfirst($propName)));
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /**
