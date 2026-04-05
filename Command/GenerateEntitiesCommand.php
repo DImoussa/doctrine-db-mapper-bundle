@@ -112,6 +112,31 @@ class GenerateEntitiesCommand extends Command
                 $primaryKeys = $this->entityGenerator->detectPrimaryKey($table, $columns);
             }
 
+            // Inférence de FK implicites : colonnes PK sans contrainte FK déclarée
+            // mais dont le nom correspond exactement au PK d'une autre table.
+            $inference = $this->schemaExtractor->inferForeignKeys($table, $primaryKeys, $foreignKeys, $indexes);
+            if (!empty($inference['inferred'])) {
+                foreach ($inference['inferred'] as $inferredFk) {
+                    $output->writeln(sprintf(
+                        '<comment>  🔍 FK inférée sur %s.%s → %s.%s (aucune contrainte FK déclarée)</comment>',
+                        $table,
+                        $inferredFk['COLUMN_NAME'],
+                        $inferredFk['REFERENCED_TABLE_NAME'],
+                        $inferredFk['REFERENCED_COLUMN_NAME']
+                    ));
+                }
+                $foreignKeys = array_merge($foreignKeys, $inference['inferred']);
+            }
+            if (!empty($inference['ambiguous'])) {
+                foreach ($inference['ambiguous'] as $ambiguousCol) {
+                    $output->writeln(sprintf(
+                        '<comment>  ⚠️  Colonne PK ambiguë ignorée : %s.%s — aucune FK déclarée et le nom correspond à plusieurs tables. Déclarez la contrainte FK manuellement.</comment>',
+                        $table,
+                        $ambiguousCol
+                    ));
+                }
+            }
+
             $allTablesData[$table] = [
                 'columns' => $columns,
                 'primaryKeys' => $primaryKeys,
