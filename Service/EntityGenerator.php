@@ -116,11 +116,11 @@ PHP;
 
             $isPrimaryKey = in_array($columnName, $primaryKeys, true) && !$isAssociationTable;
             $isUnique = in_array($columnName, $uniqueColumns, true);
-            $code .= $this->generatePropertyCode($column, $isPrimaryKey, $isUnique);
+            $code .= $this->generatePropertyCode($column, $isPrimaryKey, $isUnique, count($primaryKeys) > 1);
             $definedProperties[$propertyName] = true;
         }
 
-        // Relations ManyToOne — regrouper les FK par table cible pour détecter les FK multiples
+        // Relations ManyToOne â€” regrouper les FK par table cible pour dÃ©tecter les FK multiples
         $fkGroupedByTarget = [];
         foreach ($foreignKeys as $fk) {
             $targetTable = $fk['REFERENCED_TABLE_NAME'];
@@ -173,7 +173,7 @@ PHP;
             $relationPropertyNames[$fk['COLUMN_NAME']] = $propertyName;
         }
 
-        // Relations OneToMany (côté inverse)
+        // Relations OneToMany (cÃ´tÃ© inverse)
         $addedInverseRelations = [];
         $inverseGroupedBySource = [];
         foreach ($inverseRelations as $relation) {
@@ -281,7 +281,7 @@ PHP;
             $generatedAccessors[$propertyName] = true;
         }
 
-        // Méthodes de collection pour OneToMany
+        // MÃ©thodes de collection pour OneToMany
         $processedOneToManyMethods = [];
         $inverseGroupedBySource = [];
         foreach ($inverseRelations as $relation) {
@@ -337,7 +337,7 @@ PHP;
             $code .= "        return \$this;\n    }\n\n";
         }
 
-        // Méthodes de collection pour ManyToMany
+        // MÃ©thodes de collection pour ManyToMany
         foreach ($manyToManyPropertyMap as $entry) {
             $relation = $entry['relation'];
             $targetEntity = $entry['targetEntity'];
@@ -377,8 +377,8 @@ PHP;
     }
 
     /**
-     * Extrait un nom sémantique depuis une colonne FK.
-     * Ex: sender_id → sender, author_id → author
+     * Extrait un nom sÃ©mantique depuis une colonne FK.
+     * Ex: sender_id â†’ sender, author_id â†’ author
      */
     private function extractSemanticName(string $columnName, string $targetTable): string
     {
@@ -400,8 +400,8 @@ PHP;
     }
 
     /**
-     * Génère un nom inversedBy pour les FK multiples vers une même table.
-     * Ex: sender → sentMessages, receiver → receivedMessages
+     * GÃ©nÃ¨re un nom inversedBy pour les FK multiples vers une mÃªme table.
+     * Ex: sender â†’ sentMessages, receiver â†’ receivedMessages
      */
     private function generateInversedByName(string $propertyName, string $entityName): string
     {
@@ -424,19 +424,19 @@ PHP;
     }
 
     /**
-     * Extrait le nom de propriété depuis une colonne FK.
-     * Ex: id_constat → constat, idProprietaire → proprietaire, chantier_id → chantier
+     * Extrait le nom de propriÃ©tÃ© depuis une colonne FK.
+     * Ex: id_constat â†’ constat, idProprietaire â†’ proprietaire, chantier_id â†’ chantier
      */
     private function cleanRelationPropertyName(string $columnName, string $referencedTable): string
     {
         $camelName = $this->snakeToCamel($columnName);
 
-        // Préfixe id : id_constat → constat, idProprietaire → proprietaire
+        // PrÃ©fixe id : id_constat â†’ constat, idProprietaire â†’ proprietaire
         if (str_starts_with($camelName, 'id') && strlen($camelName) > 2) {
             return lcfirst(substr($camelName, 2));
         }
 
-        // Suffixe Id : chantierId → chantier
+        // Suffixe Id : chantierId â†’ chantier
         if (str_ends_with($camelName, 'Id') && strlen($camelName) > 2) {
             return lcfirst(substr($camelName, 0, -2));
         }
@@ -506,21 +506,30 @@ PHP;
         return 'id' . $this->snakeToCamel($tableName, true);
     }
 
-    private function generatePropertyCode(array $column, bool $isPrimaryKey, bool $isUnique = false): string
+    private function generatePropertyCode(array $column, bool $isPrimaryKey, bool $isUnique = false, bool $isCompositePk = false): string
     {
         $phpType = $this->mapDoctrineTypeToPhp($column['DATA_TYPE']);
         $nullable = $column['IS_NULLABLE'] === 'YES';
         $attributes = [];
 
         if ($isPrimaryKey) {
-            $attributes[] = "    #[ORM\Id]";
-            if (in_array($column['DATA_TYPE'], ['int', 'bigint', 'smallint'])) {
-                $attributes[] = "    #[ORM\GeneratedValue]";
+
+            if ($phpType === 'bool') {
+                $phpType = 'int';
+            }
+            $attributes[] = "    #[ORM\\Id]";
+
+            if (!$isCompositePk && in_array($column['DATA_TYPE'], ['int', 'bigint', 'smallint', 'tinyint', 'mediumint'])) {
+                $attributes[] = "    #[ORM\\GeneratedValue]";
             }
             $nullable = true;
         }
 
         $ormType = $this->mapToORMType($column['DATA_TYPE'], $column['COLUMN_TYPE']);
+
+        if ($isPrimaryKey && $ormType === 'Types::BOOLEAN') {
+            $ormType = 'Types::INTEGER';
+        }
         $columnAttr = "    #[ORM\Column(name: \"{$column['COLUMN_NAME']}\", type: $ormType";
 
         if ($this->columnSupportsLength($column['DATA_TYPE'])) {
@@ -560,6 +569,10 @@ PHP;
     private function generateGetterSetterCode(array $column, bool $isPrimaryKey = false): string
     {
         $phpType = $this->mapDoctrineTypeToPhp($column['DATA_TYPE']);
+
+        if ($isPrimaryKey && $phpType === 'bool') {
+            $phpType = 'int';
+        }
         $nullable = $column['IS_NULLABLE'] === 'YES';
         $propertyName = $this->snakeToCamel($column['COLUMN_NAME']);
         $methodName = ucfirst($propertyName);
@@ -572,7 +585,7 @@ PHP;
         $code  = "    public function get$methodName(): {$nullableType}$phpType\n    {\n";
         $code .= "        return \$this->$propertyName;\n    }\n\n";
 
-        // Pas de setter pour les PK auto-générées
+        // Pas de setter pour les PK auto-gÃ©nÃ©rÃ©es
         if (!$isPrimaryKey) {
             $code .= "    public function set$methodName({$nullableType}$phpType \$$propertyName): self\n    {\n";
             $code .= "        \$this->$propertyName = \$$propertyName;\n\n";
@@ -637,7 +650,7 @@ PHP;
     }
 
     /**
-     * Détecte la clé primaire à partir des conventions de nommage courantes.
+     * DÃ©tecte la clÃ© primaire Ã  partir des conventions de nommage courantes.
      */
     public function detectPrimaryKey(string $tableName, array $columns): array
     {
@@ -735,7 +748,7 @@ PHP;
     }
 
     /**
-     * Retourne vrai si toutes les clés primaires sont aussi des clés étrangères (table d'association).
+     * Retourne vrai si toutes les clÃ©s primaires sont aussi des clÃ©s Ã©trangÃ¨res (table d'association).
      */
     private function isAssociationTable(array $primaryKeys, array $foreignKeys): bool
     {
