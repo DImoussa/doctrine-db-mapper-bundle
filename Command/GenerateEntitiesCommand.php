@@ -382,12 +382,15 @@ class GenerateEntitiesCommand extends Command
                     }
                 } catch (\Throwable $e) {
                     // Erreurs 1091 (ER_CANT_DROP_FIELD_OR_KEY) et 1176 (ER_KEY_DOES_NOT_EXITS) :
-                    // la clé ou l'index à supprimer n'existe pas, l'instruction peut être ignorée.
-                    if (preg_match('/DROP\s+(INDEX|KEY|FOREIGN\s+KEY)/i', $sql)
-                        && (str_contains($e->getMessage(), '1091')
-                            || str_contains($e->getMessage(), '1176')
-                            || str_contains($e->getMessage(), "Can't DROP")
-                            || str_contains($e->getMessage(), "doesn't exist"))) {
+                    $isIndexMissing = str_contains($e->getMessage(), '1091')
+                        || str_contains($e->getMessage(), '1176')
+                        || str_contains($e->getMessage(), "Can't DROP")
+                        || str_contains($e->getMessage(), "doesn't exist");
+
+                    $isSkippable = preg_match('/DROP\s+(INDEX|KEY|FOREIGN\s+KEY)/i', $sql)
+                        || preg_match('/RENAME\s+INDEX/i', $sql);
+
+                    if ($isSkippable && $isIndexMissing) {
                         continue;
                     }
                     throw $e;
